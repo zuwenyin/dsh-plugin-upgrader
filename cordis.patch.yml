@@ -1,0 +1,7 @@
+# dsh bundle patch: inserts this plugin into the profile's layer stack.
+# One row mounts both halves: the host half (registry packument proxy +
+# upgrade/rollback job runner) and the browser half (the "版本" tab that the
+# Plugins page renders next to Installed and Discover).
+- insert:
+    - id: plugin-upgrader
+      name: dsh-plugin-upgrader

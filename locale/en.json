@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Plugin Version Manager",
+    "description": "Adds a Versions tab to the Plugins page: upgrade every installed plugin with one click, and switch any plugin back to an older published version."
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "name": "dsh-plugin-upgrader",
+  "version": "1.0.0",
+  "description": "One-click upgrades, version history and rollback for plugins on the DeepSeek Harness Plugins page",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "plugin-manager",
+    "version-manager"
+  ],
+  "license": "MIT",
+  "author": "zuwenyin",
+  "homepage": "https://github.com/zuwenyin/dsh-plugin-upgrader#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zuwenyin/dsh-plugin-upgrader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zuwenyin/dsh-plugin-upgrader/issues"
+  },
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./assets/icon.svg"
+  },
+  "files": [
+    "src/**/*.js",
+    "cordis.patch.yml",
+    "assets/icon.svg",
+    "screenshots/*.png",
+    "locale/*.json",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}

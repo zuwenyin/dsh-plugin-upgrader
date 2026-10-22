@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Plugin version manager">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4d7cfe"/>
+      <stop offset="1" stop-color="#8f5bff"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#g)"/>
+  <path d="M32 17v13" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M32 43v4" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="36" r="4" fill="#fff"/>
+  <path d="M20 24a16 16 0 0 1 24 0" stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none" opacity=".85"/>
+  <path d="M44 44a16 16 0 0 1-24 0" stroke="#fff" stroke-width="4" stroke-linecap="round" fill="none" opacity=".55"/>
+</svg>
