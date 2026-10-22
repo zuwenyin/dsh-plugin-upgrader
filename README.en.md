@@ -45,19 +45,25 @@ A **Versions** tab appears next to *Installed* and *Discover* on the Plugins pag
 
 ## Install
 
-```bash
-dsh plugin add dsh-plugin-upgrader
-```
+Search `dsh-plugin-upgrader` on the Plugins page's **Discover** tab and hit install.
+On the desktop app use its own plugin manager — the CLI cannot change the profile
+an app has open.
 
-Open the Plugins page and the **Versions** tab is there.
+With the `dsh` CLI (swap `web` for your profile name):
+
+```bash
+dsh plugin --profile web add dsh-plugin-upgrader
+```
 
 From source:
 
 ```bash
 git clone https://github.com/zuwenyin/dsh-plugin-upgrader.git
 cd dsh-plugin-upgrader
-dsh plugin add "$PWD"
+dsh plugin --profile web add "$PWD"
 ```
+
+Open the Plugins page and the **Versions** tab is there. No build step, no restart.
 
 ## How it works
 

@@ -39,19 +39,24 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 
 ## 安装
 
+在「插件」页的**发现**标签里搜索 `dsh-plugin-upgrader`，点安装即可。
+桌面版请用它自带的插件管理界面安装，命令行改动不了正在运行的桌面 profile。
+
+用 `dsh` 命令行（把 `web` 换成你自己的 profile 名）：
+
 ```bash
-dsh plugin add dsh-plugin-upgrader
+dsh plugin --profile web add dsh-plugin-upgrader
 ```
 
-装好后打开「插件」页，顶部会多出「版本」标签。
-
-也可以从源码安装：
+从源码安装：
 
 ```bash
 git clone https://github.com/zuwenyin/dsh-plugin-upgrader.git
 cd dsh-plugin-upgrader
-dsh plugin add "$PWD"
+dsh plugin --profile web add "$PWD"
 ```
+
+装好后打开「插件」页，顶部会多出「版本」标签。不需要重新构建，也不用重启。
 
 ## 工作原理
 
