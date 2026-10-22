@@ -3,24 +3,28 @@ name: Publish
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write # npm trusted publishing (OIDC) — no long-lived token needed
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
       - name: Syntax check
         run: npm run check
       - name: Unit tests
         run: npm test
+      # Trusted publishing: GitHub mints a short-lived OIDC token and npm
+      # verifies it against the trusted publisher configured for this package,
+      # so there is no NPM_TOKEN secret to leak or rotate.
+      # Requires: the package exists on npm and lists this repository +
+      # this workflow file as its trusted publisher.
       - name: Publish to npm
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
