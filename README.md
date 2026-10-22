@@ -133,6 +133,14 @@ npm run check   # node --check 语法检查
 改完代码后让宿主重新加载本插件即可，无需重启应用：
 先 `pluginManager.setBundleEnabled(name, false)` 再 `setBundleEnabled(name, true)`。
 
+## 发布
+
+见 [RELEASING.md](./RELEASING.md)。首次手动发一次，之后打 `v*` tag 由 CI 通过 npm trusted publishing 自动发布：
+
+```bash
+npm publish --access public   # 仅首次
+```
+
 ## 许可
 
 [MIT](./LICENSE)

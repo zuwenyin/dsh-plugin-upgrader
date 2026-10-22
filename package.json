@@ -37,11 +37,16 @@
     "locale/*.json",
     "README.md",
     "README.en.md",
+    "RELEASING.md",
     "LICENSE",
     "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "test": "node --test",
