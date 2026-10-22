@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { inlineIcon, pickText, registryBase, sourceKind } from '../src/lib/bundle.js'
+import { inlineIcon, pickText, registryBase, sourceKind } from '../src/host/bundle.ts'
 
 test('sourceKind classifies registry ranges', () => {
   assert.equal(sourceKind('^1.2.3'), 'registry')

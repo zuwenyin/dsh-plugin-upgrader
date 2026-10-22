@@ -20,16 +20,22 @@
     "url": "https://github.com/zuwenyin/dsh-plugin-upgrader/issues"
   },
   "type": "module",
-  "main": "./src/index.js",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./client": "./src/client.js",
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./assets/icon.svg"
   },
   "files": [
-    "src/**/*.js",
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "src/**/*.ts",
     "cordis.patch.yml",
     "assets/icon.svg",
     "screenshots/*.png",
@@ -49,8 +55,11 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/client.js"
+    "check": "npm run typecheck && npm run build && npm test"
   },
   "dsh": {
     "bundle": {
@@ -63,5 +72,16 @@
         "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-client-locale": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-plugin-manager": "^0.2.1-rc.2",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }

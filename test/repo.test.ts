@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { githubUrlOf, isGithubUrl, normalizeRepoUrl, repoUrlOf } from '../src/lib/repo.js'
+import { githubUrlOf, isGithubUrl, normalizeRepoUrl, repoUrlOf } from '../src/host/repo.ts'
 
 test('normalizeRepoUrl understands every shape npm allows', () => {
   assert.equal(normalizeRepoUrl('owner/repo'), 'https://github.com/owner/repo')

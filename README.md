@@ -99,38 +99,58 @@ dsh plugin --profile web add "$PWD"
 
 ```
 dsh-plugin-upgrader/
-├── src/
-│   ├── index.js          宿主端：路由注册、job 调度
-│   ├── client.js         浏览器端：plugins.tab 槽位的「版本」标签
-│   └── lib/
-│       ├── overview.js   组装 overview 载荷
-│       ├── registry.js   registry packument 拉取 / 裁剪、GitHub tag 列表
-│       ├── install.js    单步安装 + enabled 状态恢复
-│       ├── bundle.js     插件元数据（来源分类、多语言字段、图标）
-│       ├── repo.js       仓库 URL 归一化
-│       ├── version.js    semver 比较、发布页链接
-│       └── http.js       回环校验、JSON 读写
+├── src/                  源码（TypeScript）
+│   ├── index.ts          宿主端入口：路由注册、job 调度
+│   ├── host/             宿主端逻辑（Node，无 DOM）
+│   │   ├── overview.ts   组装 overview 载荷
+│   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表
+│   │   ├── install.ts    单步安装 + enabled 状态恢复
+│   │   ├── bundle.ts     插件元数据（来源分类、多语言字段、图标）
+│   │   ├── repo.ts       仓库 URL 归一化
+│   │   ├── version.ts    semver 比较、发布页链接
+│   │   ├── http.ts       回环校验、JSON 读写
+│   │   └── manager.ts    宿主 pluginManager 服务的最小类型契约
+│   └── client/           浏览器端（拆成模块，由 esbuild 打成一个文件）
+│       ├── index.ts      createPlugin(require)：槽位注册入口
+│       ├── components/   Tab / PluginRow / VersionLine / JobPanel
+│       ├── copy.ts       zh / en 文案
+│       ├── styles.ts     作用域 CSS
+│       ├── hooks.ts      locale 订阅、overview 拉取
+│       ├── api.ts        fetch 封装、job 轮询
+│       ├── format.ts     版本号 / 日期 / 外部链接
+│       ├── env.ts        window 上的最小类型声明
+│       └── types.ts      载荷类型
+├── lib/                  构建产物（git 忽略，`npm run build` 生成）
+│   ├── index.js          宿主端入口（tsc 输出）
+│   ├── host/*.js         宿主端模块 + .d.ts
+│   └── client.js         浏览器端单文件 bundle（含 __ModuleLoader__ 包装）
+├── scripts/build.mjs     构建脚本：tsc 编译宿主端 + esbuild 打包 client
+├── test/                 node:test 单元测试（.ts，Node 24 直接剥离类型）
 ├── locale/               （保留）语言包
 ├── assets/icon.svg       图标
-├── test/                 node:test 单元测试
 ├── cordis.patch.yml      bundle 注册
 └── package.json
 ```
 
-`src/client.js` 是浏览器模块，通过 `window.__ModuleLoader__` 加载，只能 `require('react')`
-这类由宿主提供的模块，不能 import 本地文件，所以它保持单文件。
+浏览器端虽然拆成了多个 `.ts` 模块，但最终由 esbuild 打成一个 `lib/client.js`，
+外面套上 `window.__ModuleLoader__.load({ id, factory(require) { … } })`。
+运行时它只能 `require('react')` 这类由宿主提供的模块，不能 require 自己的其它文件，
+所以「拆模块」只发生在源码层，产物仍然是单文件。
 
 ## 开发
 
 ```bash
-npm test        # node:test 单元测试（纯函数：版本比较、仓库 URL、元数据分类）
-npm run check   # node --check 语法检查
+npm run build      # tsc 编译宿主端 + esbuild 打包 client → lib/
+npm run typecheck  # tsc 检查 src 和 test
+npm test           # node:test 单元测试（.ts 直接运行）
+npm run check      # 以上全部（typecheck + build + test）
 ```
 
-宿主端在 `src/index.js`（`webServer` 前缀路由 `/api/plugin-upgrader`），
-浏览器端在 `src/client.js`（注册 `plugins.tab` 槽位）。
+宿主端在 `src/index.ts`（`webServer` 前缀路由 `/api/plugin-upgrader`），
+浏览器端在 `src/client/index.ts`（注册 `plugins.tab` 槽位）。
 
-改完代码后让宿主重新加载本插件即可，无需重启应用：
+改完代码后必须重新 `npm run build`（profile 里的 `link:` 指向本目录，
+但加载的是 `lib/`，不是 `src/`）。然后让宿主重新加载本插件即可，无需重启应用：
 先 `pluginManager.setBundleEnabled(name, false)` 再 `setBundleEnabled(name, true)`。
 
 ## 发布

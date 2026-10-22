@@ -21,10 +21,17 @@
  *
  * @module dsh-plugin-upgrader
  */
-
-import { writeJson, isLoopbackRequest, readJsonBody } from './lib/http.js'
-import { buildOverview } from './lib/overview.js'
-import { runStep, validateStep } from './lib/install.js'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
+import { buildOverview } from './host/overview.ts'
+import { runStep, validateStep, type StepOutcome } from './host/install.ts'
+import {
+  asPluginManager,
+  type HostContext,
+  type PackumentEntryLike,
+  type PluginManager,
+  type TagEntryLike,
+} from './host/manager.ts'
 
 /** Stable plugin name; matches the cordis.patch.yml insert id. */
 export const name = 'plugin-upgrader'
@@ -58,38 +65,76 @@ const JOB_LOG_LIMIT = 200
 /** How many log lines the overview ships for a job the tab adopts. */
 const ADOPTED_LOG_LIMIT = 40
 
+/** Lifecycle of one batch. */
+type JobStatus = 'queued' | 'running' | 'finished' | 'cancelled'
+
+/** One batch of steps, as the browser polls it. */
+interface JobRecord {
+  id: string
+  status: JobStatus
+  total: number
+  done: number
+  failed: number
+  results: StepOutcome[]
+  log: string[]
+  cancelled: boolean
+  startedAt: number
+  finishedAt?: number
+  heartbeatAt?: number
+  current?: string
+  cacheDirty?: boolean
+  abandoned?: boolean
+}
+
+/** One step as the request body carries it, before validation. */
+interface RawStep {
+  name: string
+  version: string
+  action?: 'upgrade' | 'switch'
+  enabled?: boolean
+  approveBuilds?: string[]
+  requestId?: string
+}
+
 /**
  * Mount the host half.
- * @param {any} ctx - the plugin context.
+ *
+ * @param ctx - the plugin context.
  */
-export function apply(ctx) {
-  /** @type {Map<string, { at: number, data: any }>} */
-  const packumentCache = new Map()
-  /** @type {Map<string, { at: number, tags?: Set<string>, error?: string }>} */
-  const tagCache = new Map()
-  /** @type {Map<string, any>} */
-  const jobs = new Map()
-  /** @type {{ requestId: string } | null} */
-  let inFlight = null
+export function apply(ctx: HostContext): void {
+  const packumentCache = new Map<string, PackumentEntryLike>()
+  const tagCache = new Map<string, TagEntryLike>()
+  const jobs = new Map<string, JobRecord>()
+  let inFlight: { requestId: string } | null = null
 
-  const pruneJobs = () => {
+  const pruneJobs = (): void => {
     const cutoff = Date.now() - JOB_RETENTION_MS
     for (const [id, job] of jobs) {
       if (job.finishedAt !== undefined && job.finishedAt < cutoff) jobs.delete(id)
     }
   }
 
+  /** The manager, or a reason the request cannot be served. */
+  const requireManager = (): PluginManager | undefined => asPluginManager(ctx.get('pluginManager', false))
+
   /**
    * Run a batch job to completion in the background.
-   * @param {any} job - the mutable job record.
-   * @param {any[]} steps - the requested steps.
+   *
+   * @param job - the mutable job record.
+   * @param steps - the requested steps.
    */
-  const runJob = async (job, steps) => {
-    const manager = ctx.get('pluginManager', false)
+  const runJob = async (job: JobRecord, steps: RawStep[]): Promise<void> => {
+    const manager = requireManager()
+    if (manager === undefined) {
+      job.status = 'finished'
+      job.finishedAt = Date.now()
+      job.log.push('job failed: plugin manager unavailable')
+      return
+    }
     job.status = 'running'
     job.heartbeatAt = Date.now()
     for (const step of steps) {
-      if (job.cancelled === true) break
+      if (job.cancelled) break
       inFlight = { requestId: step.requestId ?? '' }
       job.current = `${step.name}@${step.version}`
       job.log.push(`→ ${job.current}`)
@@ -101,14 +146,14 @@ export function apply(ctx) {
       job.heartbeatAt = Date.now()
       job.results.push(outcome)
       job.done = job.results.length
-      if (outcome.ok !== true) job.failed += 1
+      if (!outcome.ok) job.failed += 1
       job.log.push(
-        outcome.ok === true
+        outcome.ok
           ? `✓ ${job.current} ${outcome.application ?? 'applied'}`
           : `✗ ${job.current} ${outcome.message ?? 'failed'}`,
       )
     }
-    job.status = job.cancelled === true ? 'cancelled' : 'finished'
+    job.status = job.cancelled ? 'cancelled' : 'finished'
     job.current = undefined
     job.finishedAt = Date.now()
     job.cacheDirty = true
@@ -116,9 +161,10 @@ export function apply(ctx) {
 
   /**
    * A running job is only blocking while it is actually making progress.
-   * @returns {any | undefined} the live job, if one is genuinely running.
+   *
+   * @returns the live job, if one is genuinely running.
    */
-  const activeJob = () => {
+  const activeJob = (): JobRecord | undefined => {
     for (const job of jobs.values()) {
       if (job.status !== 'running' && job.status !== 'queued') continue
       const seen = job.heartbeatAt ?? job.startedAt ?? 0
@@ -134,23 +180,25 @@ export function apply(ctx) {
 
   /**
    * One dispatcher for every route under the prefix.
-   * @param {import('node:http').IncomingMessage} req - the request.
-   * @param {import('node:http').ServerResponse} res - the response.
+   *
+   * @param req - the request.
+   * @param res - the response.
    */
-  const handler = async (req, res) => {
+  const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (!isLoopbackRequest(req)) {
       writeJson(res, 403, { error: 'loopback-only' })
       return
     }
     const url = new URL(req.url ?? '/', 'http://localhost')
-    const pathname = url.pathname.endsWith('/') && url.pathname.length > API_BASE.length
-      ? url.pathname.slice(0, -1)
-      : url.pathname
-    const route = pathname.slice(API_BASE.length)
+    const pathname =
+      url.pathname.endsWith('/') && url.pathname.length > API_BASE.length
+        ? url.pathname.slice(0, -1)
+        : url.pathname
+    const route = pathname.startsWith(API_BASE) ? pathname.slice(API_BASE.length) : ''
     try {
       if (req.method === 'GET' && route === 'overview') {
         const force = url.searchParams.get('refresh') === '1'
-        const locale = url.searchParams.get('locale') === 'zh' ? 'zh' : 'en'
+        const locale: 'zh' | 'en' = url.searchParams.get('locale') === 'zh' ? 'zh' : 'en'
         pruneJobs()
         const live = activeJob()
         writeJson(res, 200, {
@@ -161,18 +209,19 @@ export function apply(ctx) {
            * fresh tab adopt work that is still running instead of firing a
            * second batch into a 409.
            */
-          active: live === undefined
-            ? null
-            : {
-                id: live.id,
-                status: live.status,
-                total: live.total,
-                done: live.done,
-                failed: live.failed,
-                current: live.current,
-                startedAt: live.startedAt,
-                log: live.log.slice(-ADOPTED_LOG_LIMIT),
-              },
+          active:
+            live === undefined
+              ? null
+              : {
+                  id: live.id,
+                  status: live.status,
+                  total: live.total,
+                  done: live.done,
+                  failed: live.failed,
+                  current: live.current,
+                  startedAt: live.startedAt,
+                  log: live.log.slice(-ADOPTED_LOG_LIMIT),
+                },
           jobs: [...jobs.entries()]
             .filter(([, job]) => job.finishedAt !== undefined)
             .map(([id, job]) => ({
@@ -188,7 +237,8 @@ export function apply(ctx) {
       }
       if (req.method === 'POST' && route === 'job') {
         const body = await readJsonBody(req)
-        const steps = Array.isArray(body?.steps) ? body.steps : []
+        const rawSteps = body?.steps
+        const steps: unknown[] = Array.isArray(rawSteps) ? (rawSteps as unknown[]) : []
         if (steps.length === 0) {
           writeJson(res, 400, { error: 'no-steps' })
           return
@@ -211,8 +261,10 @@ export function apply(ctx) {
           })
           return
         }
-        const id = globalThis.crypto?.randomUUID?.() ?? `job-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        const job = {
+        const id =
+          globalThis.crypto?.randomUUID?.() ??
+          `job-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        const job: JobRecord = {
           id,
           status: 'queued',
           total: steps.length,
@@ -224,7 +276,7 @@ export function apply(ctx) {
           startedAt: Date.now(),
         }
         jobs.set(id, job)
-        void runJob(job, steps).catch((error) => {
+        void runJob(job, steps as RawStep[]).catch((error: unknown) => {
           job.status = 'finished'
           job.finishedAt = Date.now()
           job.log.push(`job failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -249,9 +301,9 @@ export function apply(ctx) {
           return
         }
         running.cancelled = true
-        const manager = ctx.get('pluginManager', false)
+        const manager = requireManager()
         const target = inFlight
-        if (manager !== undefined && manager !== null && target !== null && target.requestId !== '') {
+        if (manager !== undefined && target !== null && target.requestId !== '') {
           try {
             await manager.cancelInstall(target.requestId)
           } catch {
@@ -263,7 +315,10 @@ export function apply(ctx) {
       }
       writeJson(res, 404, { error: 'not-found' })
     } catch (error) {
-      const status = typeof error?.status === 'number' ? error.status : 500
+      const status =
+        typeof (error as { status?: unknown })?.status === 'number'
+          ? (error as { status: number }).status
+          : 500
       writeJson(res, status, { error: error instanceof Error ? error.message : String(error) })
     }
   }

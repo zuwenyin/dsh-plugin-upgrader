@@ -12,8 +12,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - name: Syntax check
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Typecheck both programs, build lib/ (host + client bundle) and run the
+      # unit tests. `npm run check` is the same command contributors run locally.
+      - name: Check
         run: npm run check
-      - name: Unit tests
-        run: npm test

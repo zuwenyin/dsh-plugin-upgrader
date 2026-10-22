@@ -8,12 +8,22 @@
  * @module dsh-plugin-upgrader/lib/version
  */
 
+/** A semver split into comparable parts. */
+export interface VersionParts {
+  major: number
+  minor: number
+  patch: number
+  /** Prerelease identifiers, empty for a stable release. */
+  pre: string[]
+}
+
 /**
  * Parse a semver string into comparable parts.
- * @param {string} value - a version like `1.2.3-rc.1`.
- * @returns {{ major: number, minor: number, patch: number, pre: string[] } | null} parts, or null.
+ *
+ * @param value - a version like `1.2.3-rc.1`.
+ * @returns parts, or `null` when the string is not semver.
  */
-export function parseVersion(value) {
+export function parseVersion(value: string | undefined | null): VersionParts | null {
   const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(
     String(value ?? '').trim(),
   )
@@ -28,11 +38,12 @@ export function parseVersion(value) {
 
 /**
  * Compare two prerelease identifier lists, semver order.
- * @param {string[]} left - identifiers of the left version.
- * @param {string[]} right - identifiers of the right version.
- * @returns {number} negative, zero, or positive.
+ *
+ * @param left - identifiers of the left version.
+ * @param right - identifiers of the right version.
+ * @returns negative, zero, or positive.
  */
-export function comparePre(left, right) {
+export function comparePre(left: readonly string[], right: readonly string[]): number {
   if (left.length === 0 && right.length === 0) return 0
   if (left.length === 0) return 1
   if (right.length === 0) return -1
@@ -58,11 +69,12 @@ export function comparePre(left, right) {
 
 /**
  * Compare two versions, semver order; unparsable pairs compare equal.
- * @param {string} left - left version.
- * @param {string} right - right version.
- * @returns {number} negative when left is older.
+ *
+ * @param left - left version.
+ * @param right - right version; an absent value compares equal to anything.
+ * @returns negative when left is older.
  */
-export function compareVersions(left, right) {
+export function compareVersions(left: string | undefined | null, right: string | undefined | null): number {
   const a = parseVersion(left)
   const b = parseVersion(right)
   if (a === null || b === null) return 0
@@ -76,10 +88,11 @@ export function compareVersions(left, right) {
 
 /**
  * The tag a published version was released under.
- * @param {string} version - the published version.
- * @returns {string} `v<version>` unless the version already carries the `v`.
+ *
+ * @param version - the published version.
+ * @returns `v<version>` unless the version already carries the `v`.
  */
-export function tagOf(version) {
+export function tagOf(version: string): string {
   return version.startsWith('v') ? version : `v${version}`
 }
 
@@ -97,11 +110,11 @@ export function tagOf(version) {
  * The result is the `releases` tail only: the row already carries the project
  * URL, and repeating it on all ~80 rows costs tens of kilobytes.
  *
- * @param {Set<string> | undefined} tags - the repository's tag names, when known.
- * @param {string} version - the published version.
- * @returns {string} a protocol-relative path such as `/releases/tag/v1.2.3`.
+ * @param tags - the repository's tag names, when known.
+ * @param version - the published version.
+ * @returns a path such as `/releases/tag/v1.2.3`.
  */
-export function releasePathOf(tags, version) {
+export function releasePathOf(tags: ReadonlySet<string> | undefined, version: string): string {
   const tag = tagOf(version)
   return tags?.has(tag) === true ? `/releases/tag/${tag}` : '/releases'
 }

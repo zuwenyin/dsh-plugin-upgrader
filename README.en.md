@@ -115,41 +115,61 @@ spinning forever.
 
 ```
 dsh-plugin-upgrader/
-├── src/
-│   ├── index.js          host: routes and job scheduling
-│   ├── client.js         browser: the Versions tab on the plugins.tab slot
-│   └── lib/
-│       ├── overview.js   assembles the overview payload
-│       ├── registry.js   packument fetch / shaping, GitHub tag lists
-│       ├── install.js    one install step plus enabled-state restore
-│       ├── bundle.js     bundle metadata (source kind, i18n fields, icons)
-│       ├── repo.js       repository URL normalisation
-│       ├── version.js    semver comparison, release links
-│       └── http.js       loopback guard, JSON read/write
+├── src/                  sources (TypeScript)
+│   ├── index.ts          host entry: route registration, job scheduling
+│   ├── host/             host-side logic (Node, no DOM)
+│   │   ├── overview.ts   assembles the overview payload
+│   │   ├── registry.ts   packument fetch / shaping, GitHub tag lists
+│   │   ├── install.ts    one install step plus enabled-state restore
+│   │   ├── bundle.ts     bundle metadata (source kind, i18n fields, icons)
+│   │   ├── repo.ts       repository URL normalisation
+│   │   ├── version.ts    semver comparison, release links
+│   │   ├── http.ts       loopback guard, JSON read/write
+│   │   └── manager.ts    the minimal host pluginManager type contract
+│   └── client/           browser side (modules, bundled into one file)
+│       ├── index.ts      createPlugin(require): slot registration entry
+│       ├── components/   Tab / PluginRow / VersionLine / JobPanel
+│       ├── copy.ts       zh / en strings
+│       ├── styles.ts     scoped CSS
+│       ├── hooks.ts      locale subscription, overview fetching
+│       ├── api.ts        fetch wrappers, job polling
+│       ├── format.ts     versions / dates / external links
+│       ├── env.ts        minimal window typings
+│       └── types.ts      payload types
+├── lib/                  build output (git-ignored, produced by `npm run build`)
+│   ├── index.js          host entry (tsc output)
+│   ├── host/*.js         host modules plus .d.ts
+│   └── client.js         the browser bundle, wrapped in __ModuleLoader__
+├── scripts/build.mjs     build: tsc for the host, esbuild for the client
+├── test/                 node:test unit tests (.ts, stripped natively by Node 24)
 ├── locale/               (reserved) language files
 ├── assets/icon.svg       icon
-├── test/                 node:test unit tests
 ├── cordis.patch.yml      bundle registration
 └── package.json
 ```
 
-`src/client.js` is a browser module loaded through `window.__ModuleLoader__`; it can
-only `require` modules the host provides (`react`), not local files, so it stays a
-single file.
+The browser half is split into `.ts` modules, but esbuild bundles it back into a
+single `lib/client.js` wrapped in `window.__ModuleLoader__.load({ id, factory(require) { … } })`.
+At runtime it can only `require` modules the host provides (`react`), not its own
+siblings, so the split happens in the sources only.
 
 ## Development
 
 ```bash
-npm test        # node:test unit tests (pure helpers: version compare, repo URLs, metadata)
-npm run check   # node --check syntax check
+npm run build      # tsc for the host + esbuild for the client → lib/
+npm run typecheck  # tsc over src and test
+npm test           # node:test unit tests (.ts runs directly)
+npm run check      # all of the above (typecheck + build + test)
 ```
 
-The host half lives in `src/index.js` (a `webServer` prefix route at
-`/api/plugin-upgrader`), the browser half in `src/client.js` (registering the
+The host half lives in `src/index.ts` (a `webServer` prefix route at
+`/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
 `plugins.tab` slot).
 
-Reload the plugin after editing, no app restart needed: call
-`pluginManager.setBundleEnabled(name, false)` and then `setBundleEnabled(name, true)`.
+Re-run `npm run build` after editing — the profile's `link:` points at this
+directory but loads `lib/`, not `src/`. Then reload the plugin, no app restart
+needed: call `pluginManager.setBundleEnabled(name, false)` and then
+`setBundleEnabled(name, true)`.
 
 ## License
 

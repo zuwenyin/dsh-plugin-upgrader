@@ -9,18 +9,36 @@
  * @module dsh-plugin-upgrader/lib/repo
  */
 
+/** The manifest fields this module reads. */
+export interface RepoManifest {
+  repository?: unknown
+  homepage?: unknown
+  bugs?: unknown
+}
+
+/** The shape of the registry document this module reads. */
+export interface PackumentLike {
+  'dist-tags'?: { latest?: unknown } | undefined
+  versions?: Record<string, RepoManifest | undefined> | undefined
+  repository?: unknown
+  homepage?: unknown
+  bugs?: unknown
+}
+
 /**
  * Turn any of the shapes npm allows for `repository` into an https URL.
+ *
  * Handles `owner/repo`, `github:owner/repo`, `git@host:owner/repo.git`,
  * `git+https://…`, and plain URLs; returns `undefined` for anything else.
- * @param {unknown} raw - the manifest field.
- * @returns {string | undefined} an https URL without a trailing slash.
+ *
+ * @param raw - the manifest field.
+ * @returns an https URL without a trailing slash.
  */
-export function normalizeRepoUrl(raw) {
+export function normalizeRepoUrl(raw: unknown): string | undefined {
   const text = typeof raw === 'string'
     ? raw
-    : raw !== null && typeof raw === 'object' && typeof (/** @type {any} */ (raw).url) === 'string'
-      ? /** @type {any} */ (raw).url
+    : raw !== null && typeof raw === 'object' && typeof (raw as { url?: unknown }).url === 'string'
+      ? (raw as { url: string }).url
       : undefined
   if (text === undefined) return undefined
   let value = text.trim()
@@ -46,10 +64,11 @@ export function normalizeRepoUrl(raw) {
 
 /**
  * Is this a github.com URL?
- * @param {string} url - an absolute URL.
- * @returns {boolean} whether the host is GitHub.
+ *
+ * @param url - an absolute URL.
+ * @returns whether the host is GitHub.
  */
-export function isGithubUrl(url) {
+export function isGithubUrl(url: string): boolean {
   try {
     return /^(www\.)?github\.com$/.test(new URL(url).hostname)
   } catch {
@@ -59,32 +78,38 @@ export function isGithubUrl(url) {
 
 /**
  * The project page a user would recognise as "the plugin's GitHub".
+ *
  * `repository` wins; `homepage`/`bugs` are only used when they point at GitHub,
  * so a marketing site never stands in for the source link.
- * @param {any} packument - the registry document.
- * @param {{ repository?: unknown, homepage?: unknown, bugs?: unknown } | undefined} manifest - one version manifest.
- * @returns {string | undefined} an https GitHub URL.
+ *
+ * @param packument - the registry document.
+ * @param manifest - one version manifest.
+ * @returns an https GitHub URL.
  */
-export function githubUrlOf(packument, manifest) {
+export function githubUrlOf(
+  packument: PackumentLike | undefined,
+  manifest: RepoManifest | undefined,
+): string | undefined {
   const direct = [
     normalizeRepoUrl(manifest?.repository),
     normalizeRepoUrl(packument?.repository),
-  ].find((url) => url !== undefined && url !== null && isGithubUrl(url))
+  ].find((url): url is string => url !== undefined && isGithubUrl(url))
   if (direct !== undefined) return direct
   const fallbacks = [
     normalizeRepoUrl(packument?.homepage),
     normalizeRepoUrl(manifest?.homepage),
     normalizeRepoUrl(packument?.bugs),
   ]
-  return fallbacks.find((url) => url !== undefined && url !== null && isGithubUrl(url))
+  return fallbacks.find((url): url is string => url !== undefined && isGithubUrl(url))
 }
 
 /**
  * The repository a packument points at, independent of any version row.
- * @param {any} packument - the registry document.
- * @returns {string | undefined} an https GitHub URL.
+ *
+ * @param packument - the registry document.
+ * @returns an https GitHub URL.
  */
-export function repoUrlOf(packument) {
+export function repoUrlOf(packument: PackumentLike | undefined): string | undefined {
   const latest = packument?.['dist-tags']?.latest
   const manifest = typeof latest === 'string' ? packument?.versions?.[latest] : undefined
   return githubUrlOf(packument, manifest)

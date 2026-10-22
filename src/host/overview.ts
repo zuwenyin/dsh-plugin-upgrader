@@ -7,26 +7,84 @@
  *
  * @module dsh-plugin-upgrader/lib/overview
  */
-
-import { compareVersions } from './version.js'
-import { repoUrlOf } from './repo.js'
-import { inlineIcon, pickText, registryBase, sourceKind } from './bundle.js'
-import { cachedTags, fetchPackument, shapePackument } from './registry.js'
+import { compareVersions } from './version.ts'
+import { repoUrlOf, type PackumentLike } from './repo.ts'
+import { inlineIcon, pickText, registryBase, sourceKind, type SourceKind } from './bundle.ts'
+import {
+  cachedTags,
+  fetchPackument,
+  shapePackument,
+  type FullPackument,
+  type PackumentEntry,
+  type TagEntry,
+  type VersionRow,
+} from './registry.ts'
+import type { BundleInfo, HostContext, ManagementError, RegistriesReport, ReadOnlyReason } from './manager.ts'
 
 /** Inline data-URL icons above this size are dropped from the overview payload. */
 const INLINE_ICON_LIMIT = 2048
 
+/** One installed bundle, flattened for the tab. */
+export interface OverviewRow {
+  name: string
+  version?: string
+  official: boolean
+  availability: BundleInfo['availability']
+  installed: boolean
+  enabled: boolean
+  removable: boolean
+  managed: boolean
+  source?: string
+  kind: SourceKind
+  title: string
+  description?: string
+  icon?: string
+  readOnlyReason?: ReadOnlyReason
+  error: ManagementError | null
+  latest?: string
+  repoUrl?: string
+  upgradable: boolean
+  versions: VersionRow[]
+  tags: Record<string, string>
+  totalVersions: number
+  versionError?: string
+}
+
+/** The whole overview response body. */
+export interface Overview {
+  generatedAt: number
+  registry: string
+  registries: RegistriesReport
+  runtimeVersion: string | null
+  bundles: OverviewRow[]
+}
+
+/** Options for one overview build. */
+export interface OverviewOptions {
+  force?: boolean
+  locale?: 'zh' | 'en'
+}
+
 /**
  * Build the overview the tab renders.
- * @param {any} ctx - the plugin context.
- * @param {Map<string, { at: number, data: any }>} cache - packument cache.
- * @param {Map<string, { at: number, tags?: Set<string>, error?: string }>} tagCache - repository tag cache.
- * @param {{ force?: boolean, locale?: 'zh' | 'en' }} options - refresh + language.
- * @returns {Promise<any>} the overview payload.
+ *
+ * @param ctx - the plugin context.
+ * @param cache - packument cache.
+ * @param tagCache - repository tag cache.
+ * @param options - refresh + language.
+ * @returns the overview payload.
  */
-export async function buildOverview(ctx, cache, tagCache, options) {
-  const manager = ctx.get('pluginManager', false)
-  if (manager === undefined || manager === null) {
+export async function buildOverview(
+  ctx: HostContext,
+  cache: Map<string, PackumentEntry>,
+  tagCache: Map<string, TagEntry>,
+  options: OverviewOptions,
+): Promise<Overview> {
+  const manager = ctx.get('pluginManager', false) as
+    | { listBundles(): Promise<BundleInfo[]>; registries(): Promise<RegistriesReport> }
+    | null
+    | undefined
+  if (manager === null || manager === undefined) {
     throw Object.assign(new Error('plugin manager unavailable'), { status: 503 })
   }
   const [bundles, registries] = await Promise.all([manager.listBundles(), manager.registries()])
@@ -34,11 +92,11 @@ export async function buildOverview(ctx, cache, tagCache, options) {
   const locale = options.locale === 'zh' ? 'zh' : 'en'
 
   const rows = await Promise.all(
-    bundles.filter((bundle) => bundle.installed === true).map(async (bundle) => {
+    bundles.filter((bundle) => bundle.installed === true).map(async (bundle): Promise<OverviewRow> => {
       const kind = sourceKind(bundle.source)
       /** Official rows live inside the installation and cannot be replaced. */
       const managed = bundle.availability === 'profile' && bundle.installed === true
-      const entry = {
+      const entry: OverviewRow = {
         name: bundle.name,
         version: bundle.version,
         official: bundle.official === true,
@@ -62,8 +120,12 @@ export async function buildOverview(ctx, cache, tagCache, options) {
         totalVersions: 0,
         versionError: undefined,
       }
-      if (!managed || bundle.version === undefined) {
+      if (bundle.version === undefined) {
         entry.versionError = managed ? 'version unknown' : 'not a profile-managed package'
+        return entry
+      }
+      if (!managed) {
+        entry.versionError = 'not a profile-managed package'
         return entry
       }
       if (kind !== 'registry' && kind !== 'unknown') {
@@ -75,11 +137,11 @@ export async function buildOverview(ctx, cache, tagCache, options) {
         entry.versionError = error ?? 'registry lookup failed'
         return entry
       }
-      const repoUrl = repoUrlOf(data)
+      const repoUrl = repoUrlOf(data as PackumentLike)
       const tagNames = repoUrl === undefined
         ? undefined
         : await cachedTags(repoUrl, tagCache, options.force === true)
-      const shaped = shapePackument(bundle.name, data, bundle.version, tagNames)
+      const shaped = shapePackument(data as FullPackument, bundle.version, tagNames)
       entry.latest = shaped.latest
       entry.repoUrl = shaped.repoUrl
       entry.versions = shaped.versions
@@ -98,11 +160,12 @@ export async function buildOverview(ctx, cache, tagCache, options) {
     return left.name.localeCompare(right.name)
   })
 
+  const runtime = ctx.get('dshVersion', false)
   return {
     generatedAt: Date.now(),
     registry: base,
     registries,
-    runtimeVersion: ctx.get('dshVersion', false) ?? null,
+    runtimeVersion: typeof runtime === 'string' ? runtime : null,
     bundles: rows,
   }
 }

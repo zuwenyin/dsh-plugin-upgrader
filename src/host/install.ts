@@ -7,20 +7,58 @@
  *
  * @module dsh-plugin-upgrader/lib/install
  */
+import type { ChangeResult, PluginManager, StepRecord } from './manager.ts'
+
+/** Progress sink for one job. */
+export type LogSink = (message: string) => void
+
+/** One step's outcome, including every failure stage. */
+export interface StepOutcome {
+  name: string
+  version: string
+  spec: string
+  requestId: string
+  ok: boolean
+  enabled?: boolean
+  application?: ChangeResult['application']
+  changed?: boolean
+  stage?: 'install' | 'remove' | 'enable'
+  restartReason?: string
+  message?: string
+  detail?: string
+  pendingBuilds?: string[]
+  warnings?: string[]
+  packageResult?: {
+    exitCode: number
+    kind?: string
+    timedOut?: boolean
+    tail?: string
+  }
+}
+
+/** Allowed per-step actions. */
+export const ACTIONS = new Set<string>(['upgrade', 'switch'])
 
 /**
  * Re-apply the enabled state a step asked for after the package was replaced.
+ *
  * `installBundle` activates what it installs, so a disabled plugin would
  * otherwise come back enabled; the bundle switch is the persistent lever.
- * @param {any} manager - the plugin manager.
- * @param {{ name: string }} step - the step that just ran.
- * @param {boolean | undefined} wanted - the state to restore, if any.
- * @param {(message: string) => void} log - progress sink.
- * @returns {Promise<boolean | undefined>} the state now in effect, if known.
+ *
+ * @param manager - the plugin manager.
+ * @param step - the step that just ran.
+ * @param wanted - the state to restore, if any.
+ * @param log - progress sink.
+ * @returns the state now in effect, if known.
  */
-export async function restoreEnabledState(manager, step, wanted, log) {
+export async function restoreEnabledState(
+  manager: PluginManager,
+  step: Pick<StepRecord, 'name'>,
+  wanted: boolean | undefined,
+  log: LogSink,
+): Promise<boolean | undefined> {
   if (wanted === undefined) return undefined
-  let current
+  let current: boolean | undefined
   try {
     const bundles = await manager.listBundles()
     const entry = Array.isArray(bundles) ? bundles.find((item) => item?.name === step.name) : undefined
@@ -50,35 +88,47 @@ export async function restoreEnabledState(manager, step, wanted, log) {
  * Every outcome — including a thrown manager call — comes back as one record so
  * the job log can report per-plugin success without a second error channel.
  *
- * @param {any} manager - the plugin manager.
- * @param {{ name: string, version: string, enabled?: boolean, approveBuilds?: string[] }} step - the requested change.
- * @param {(message: string) => void} log - progress sink.
- * @returns {Promise<any>} the outcome record.
+ * @param manager - the plugin manager.
+ * @param step - the requested change.
+ * @param log - progress sink.
+ * @returns the outcome record.
  */
-export async function runStep(manager, step, log) {
+export async function runStep(
+  manager: PluginManager,
+  step: StepRecord,
+  log: LogSink,
+): Promise<StepOutcome> {
   const spec = `${step.name}@${step.version}`
-  const requestId = globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  const buildApproval = Array.isArray(step.approveBuilds) && step.approveBuilds.length > 0
-    ? { approvedBuilds: step.approveBuilds }
-    : {}
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const buildApproval =
+    Array.isArray(step.approveBuilds) && step.approveBuilds.length > 0
+      ? { approvedBuilds: step.approveBuilds }
+      : {}
   const base = { name: step.name, version: step.version, spec, requestId }
   const restoreEnabled = typeof step.enabled === 'boolean' ? step.enabled : undefined
   log(`install ${spec}`)
 
-  let result
+  const options = {
+    saveExact: true,
+    ...(restoreEnabled === undefined ? {} : { enabled: restoreEnabled }),
+    ...buildApproval,
+  }
+
+  let result: ChangeResult
   try {
-    result = await manager.installBundle(spec, {
-      saveExact: true,
-      requestId,
-      ...(restoreEnabled === undefined ? {} : { enabled: restoreEnabled }),
-      ...buildApproval,
-    })
+    result = await manager.installBundle(spec, { ...options, requestId })
   } catch (error) {
-    return { ...base, ok: false, stage: 'install', message: error instanceof Error ? error.message : String(error) }
+    return {
+      ...base,
+      ok: false,
+      stage: 'install',
+      message: error instanceof Error ? error.message : String(error),
+    }
   }
   if (result?.error?.code === 'already-installed') {
     log(`remove ${step.name} (replacing an installed dependency)`)
-    let removed
+    let removed: ChangeResult
     try {
       removed = await manager.removeBundle(step.name)
     } catch (error) {
@@ -101,12 +151,7 @@ export async function runStep(manager, step, log) {
       }
     }
     try {
-      result = await manager.installBundle(spec, {
-        saveExact: true,
-        requestId: undefined,
-        ...(restoreEnabled === undefined ? {} : { enabled: restoreEnabled }),
-        ...buildApproval,
-      })
+      result = await manager.installBundle(spec, { ...options, requestId: undefined })
     } catch (error) {
       return {
         ...base,
@@ -131,33 +176,31 @@ export async function runStep(manager, step, log) {
     detail: result?.error?.diagnostic,
     pendingBuilds: result?.pendingBuilds,
     warnings: result?.warnings,
-    packageResult: result?.packageResult === undefined
-      ? undefined
-      : {
-          exitCode: result.packageResult.exitCode,
-          kind: result.packageResult.kind,
-          timedOut: result.packageResult.timedOut,
-          tail: typeof result.packageResult.output === 'string'
-            ? result.packageResult.output.slice(-1600)
-            : undefined,
-        },
+    packageResult:
+      result?.packageResult === undefined
+        ? undefined
+        : {
+            exitCode: result.packageResult.exitCode,
+            kind: result.packageResult.kind,
+            timedOut: result.packageResult.timedOut,
+            tail:
+              typeof result.packageResult.output === 'string'
+                ? result.packageResult.output.slice(-1600)
+                : undefined,
+          },
   }
 }
 
 /**
  * Whether a step names something this plugin is willing to install.
- * @param {unknown} step - one element of the request body.
- * @returns {string | undefined} an error code, or undefined when valid.
+ *
+ * @param step - one element of the request body.
+ * @returns an error code, or undefined when valid.
  */
-export function validateStep(step) {
+export function validateStep(step: unknown): string | undefined {
   if (step === null || typeof step !== 'object') return 'invalid-step'
-  const record = /** @type {Record<string, unknown>} */ (step)
+  const record = step as Record<string, unknown>
   if (typeof record.name !== 'string' || typeof record.version !== 'string') return 'invalid-step'
-  if (record.action !== undefined && !ACTIONS.has(/** @type {string} */ (record.action))) {
-    return 'invalid-action'
-  }
+  if (record.action !== undefined && !ACTIONS.has(String(record.action))) return 'invalid-action'
   return undefined
 }
-
-/** Allowed per-step actions. */
-export const ACTIONS = new Set(['upgrade', 'switch'])

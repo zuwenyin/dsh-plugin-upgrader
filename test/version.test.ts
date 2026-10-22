@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { compareVersions, parseVersion, releasePathOf, tagOf } from '../src/lib/version.js'
+import { compareVersions, parseVersion, releasePathOf, tagOf } from '../src/host/version.ts'
 
 test('parseVersion accepts plain, prerelease and build metadata', () => {
   assert.deepEqual(parseVersion('1.2.3'), { major: 1, minor: 2, patch: 3, pre: [] })

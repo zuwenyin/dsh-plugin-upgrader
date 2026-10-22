@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Rewritten in TypeScript.** The whole project is now typed; `npm run typecheck`
+  covers both the host program and the tests.
+- **The browser half is split into modules** (`src/client/`) instead of one 1100-line
+  file: components, copy, styles, hooks, api and formatting each live on their own.
+  esbuild bundles them back into the single `lib/client.js` the DSH client loader
+  expects.
+- **A real build step.** `npm run build` runs `tsc` for the host half and `esbuild`
+  for the client half; `lib/` is the published artifact and is git-ignored.
+- `npm run check` now means typecheck + build + test, and CI runs it on every push.
+
 ## 1.0.0
 
 First public release.
