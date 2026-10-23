@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.1 — 2026-10-23
 
 - **Rewritten in TypeScript.** The whole project is now typed; `pnpm run typecheck`
   covers both the host program and the tests.
