@@ -41,9 +41,14 @@ export const CSS = `
 .dsh-pu-row.is-open { border-color: var(--dsw-alias-border-l2); }
 .dsh-pu-row.is-picked { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 1px color-mix(in srgb, var(--dsw-alias-brand-primary) 32%, transparent); }
 .dsh-pu-row-main { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
-.dsh-pu-check { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }
-.dsh-pu-check input { width: 14px; height: 14px; margin: 0; cursor: pointer; accent-color: var(--dsw-alias-brand-primary); }
-.dsh-pu-check input:disabled { cursor: default; opacity: .45; }
+.dsh-pu-check { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; cursor: pointer; border-radius: 4px; outline: none; }
+.dsh-pu-check .dsh-pu-tick { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--dsw-alias-border-l3); background: var(--dsw-alias-bg-layer-1); box-sizing: border-box; position: relative; transition: background .12s ease, border-color .12s ease; }
+.dsh-pu-check.is-on .dsh-pu-tick { background: var(--dsw-alias-brand-primary); border-color: var(--dsw-alias-brand-primary); }
+.dsh-pu-check.is-on .dsh-pu-tick::after { content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 7px; border: solid var(--dsw-alias-label-primary-inverted, #fff); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.dsh-pu-check.is-off { cursor: default; }
+.dsh-pu-check.is-off .dsh-pu-tick { opacity: .45; }
+.dsh-pu-check:not(.is-off):hover .dsh-pu-tick { border-color: var(--dsw-alias-brand-primary); }
+.dsh-pu-check:not(.is-off):focus-visible .dsh-pu-tick { box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 45%, transparent); }
 .dsh-pu-selbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--dsw-alias-label-secondary); padding: 7px 10px; border-radius: 8px; border: 1px dashed var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); }
 .dsh-pu-selbar.is-active { border-style: solid; border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-label-primary); }
 .dsh-pu-selbar .dsh-pu-grow { flex: 1; min-width: 0; }

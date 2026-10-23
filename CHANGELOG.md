@@ -16,6 +16,11 @@
 - **pnpm replaces npm** as the package manager (`packageManager` is pinned);
   `pnpm-lock.yaml` is the lockfile CI installs from.
 - `pnpm run check` now means typecheck + build + test, and CI runs it on every push.
+- **The row checkbox is drawn by the plugin.** `<input type="checkbox">` rendered
+  unchecked in the Harness window even when its `checked` state was set (the tick was
+  painted by the native control the app's WebView never drew), so selection looked
+  broken while the selection bar still counted the rows. The box is now a styled
+  element driven by `aria-checked`, and it looks identical on every platform.
 
 ## 1.0.0
 

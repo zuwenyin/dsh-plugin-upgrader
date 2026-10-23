@@ -50,15 +50,23 @@ export function PluginRow(props: PluginRowProps): unknown {
       { className: 'dsh-pu-row-main' },
       h(
         'span',
-        { className: 'dsh-pu-check' },
-        h('input', {
-          type: 'checkbox',
-          checked: picked === true,
-          disabled: busy || !selectable,
-          title: selectable ? t('selectRow') : undefined,
+        {
+          className: `dsh-pu-check${picked ? ' is-on' : ''}${busy || !selectable ? ' is-off' : ''}`,
+          role: 'checkbox',
+          'aria-checked': picked === true ? 'true' : 'false',
+          'aria-disabled': busy || !selectable ? 'true' : undefined,
           'aria-label': `${t('selectRow')}: ${row.name}`,
-          onChange: () => onToggle(row.name),
-        }),
+          tabIndex: busy || !selectable ? undefined : 0,
+          title: selectable ? t('selectRow') : undefined,
+          onClick: busy || !selectable ? undefined : () => onToggle(row.name),
+          onKeyDown: (event: KeyboardEvent) => {
+            if (busy || !selectable) return
+            if (event.key !== ' ' && event.key !== 'Enter') return
+            event.preventDefault()
+            onToggle(row.name)
+          },
+        },
+        h('span', { className: 'dsh-pu-tick', 'aria-hidden': 'true' }),
       ),
       h('span', { className: `dsh-pu-dot${status === 'idle' ? '' : status === 'new' ? ' is-new' : ' is-err'}` }),
       h(
