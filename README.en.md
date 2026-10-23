@@ -140,7 +140,7 @@ dsh-plugin-upgrader/
 │   ├── index.js          host entry (tsc output)
 │   ├── host/*.js         host modules plus .d.ts
 │   └── client.js         the browser bundle, wrapped in __ModuleLoader__
-├── scripts/build.mjs     build: tsc for the host, esbuild for the client
+├── scripts/build.mjs     build: tsc for the host, esbuild for the client (--watch = dev)
 ├── test/                 node:test unit tests (.ts, stripped natively by Node 24)
 ├── locale/               (reserved) language files
 ├── assets/icon.svg       icon

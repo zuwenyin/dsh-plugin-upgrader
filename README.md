@@ -124,7 +124,7 @@ dsh-plugin-upgrader/
 │   ├── index.js          宿主端入口（tsc 输出）
 │   ├── host/*.js         宿主端模块 + .d.ts
 │   └── client.js         浏览器端单文件 bundle（含 __ModuleLoader__ 包装）
-├── scripts/build.mjs     构建脚本：tsc 编译宿主端 + esbuild 打包 client
+├── scripts/build.mjs     构建脚本：tsc 编译宿主端 + esbuild 打包 client（加 --watch 即 dev）
 ├── test/                 node:test 单元测试（.ts，Node 24 直接剥离类型）
 ├── locale/               （保留）语言包
 ├── assets/icon.svg       图标
