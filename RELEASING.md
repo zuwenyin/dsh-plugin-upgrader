@@ -6,28 +6,31 @@
 这套机制有个硬性前提：**包必须已经存在于 npm 上，才能配置 trusted publisher**。
 所以第一次发布只能手动做一次，之后全自动。
 
+依赖管理用 **pnpm**（`package.json` 里钉了 `packageManager: pnpm@11.9.0`），
+下文所有命令都用 pnpm；照抄 `npm xxx` 会因为缺 `package-lock.json` 而失败。
+
 ---
 
 ## 第 0 步：准备
 
 ```bash
 cd D:\DeepseekHarnessWorkspace\dsh-plugin-upgrader
-npm run check
-npm test
+pnpm install
+pnpm run check
 ```
 
 两条都通过再往下。
 
 > 注意本机 `.npmrc` 里 `registry` 指向的是 `registry.npmmirror.com`（国内镜像，只读镜像不发包）。
-> 仓库的 `package.json` 里已经写了 `publishConfig.registry = https://registry.npmjs.org/`，
-> 所以 `npm publish` 会自动打到官方源，不需要改全局配置。
+> 仓库根目录的 `.npmrc` 已经把 `registry` 固定成 `https://registry.npmjs.org/`，
+> `package.json` 里也有 `publishConfig.registry`，所以 `pnpm publish` 会自动打到官方源。
 
 ---
 
 ## 第 1 步：登录 npm（只需第一次）
 
 ```bash
-npm login --registry https://registry.npmjs.org
+pnpm login --registry https://registry.npmjs.org
 ```
 
 浏览器会弹出授权页，登录后回到终端。
@@ -36,7 +39,7 @@ npm login --registry https://registry.npmjs.org
 确认登录成功：
 
 ```bash
-npm whoami --registry https://registry.npmjs.org
+pnpm whoami --registry https://registry.npmjs.org
 ```
 
 > 用 granular token 的话 `whoami` 会报 401，这是正常的，不影响发布。
@@ -50,10 +53,10 @@ npm whoami --registry https://registry.npmjs.org
 cd D:\DeepseekHarnessWorkspace\dsh-plugin-upgrader
 
 # 先看一眼会打包哪些文件，确认没有漏东西
-npm pack --dry-run
+pnpm pack --dry-run
 
 # 正式发布
-npm publish --access public
+pnpm publish --access public
 ```
 
 如果终端提示 `Enter OTP:`，打开验证器 App 输入 6 位码即可。
@@ -62,7 +65,7 @@ npm publish --access public
 发布成功后立刻验证：
 
 ```bash
-npm view dsh-plugin-upgrader version dist.tarball --registry https://registry.npmjs.org
+pnpm view dsh-plugin-upgrader version dist.tarball --registry https://registry.npmjs.org
 ```
 
 期望看到 `1.0.0`。
@@ -103,7 +106,7 @@ https://www.npmjs.com/settings/~tokens
 cd D:\DeepseekHarnessWorkspace\dsh-plugin-upgrader
 
 # 1) 升版本号（自动改 package.json，不加 git tag）
-npm version patch --no-git-tag-version    # 或用 minor / major
+pnpm version patch --no-git-tag-version    # 或用 minor / major
 
 # 2) 在 CHANGELOG.md 顶部补一段，然后提交
 git add -A
@@ -115,7 +118,8 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-推送 tag 后 GitHub Actions 会自动跑 `check` → `test` → `npm publish --provenance`。
+推送 tag 后 GitHub Actions 会自动跑 `pnpm run check` → `pnpm test` → `pnpm publish`。
+（`pnpm publish` 在 trusted publishing 下会自己附加 provenance，不需要再写 `--provenance`。）
 
 看进度：
 
@@ -127,7 +131,7 @@ gh run watch --repo zuwenyin/dsh-plugin-upgrader
 发布完验证：
 
 ```bash
-npm view dsh-plugin-upgrader version --registry https://registry.npmjs.org
+pnpm view dsh-plugin-upgrader version --registry https://registry.npmjs.org
 ```
 
 ---
@@ -146,19 +150,22 @@ gh release create v1.0.1 --repo zuwenyin/dsh-plugin-upgrader --title "v1.0.1" --
 
 ## 常见问题
 
-**`npm error code EOTP`**
-在非交互终端里跑 `npm publish` 无法输入 OTP。请在自己本机的终端里跑，或者在 npm
+**`npm error code EOTP` / `pnpm` 提示输入 OTP 但没反应**
+在非交互终端里跑发布无法输入 OTP。请在自己本机的终端里跑，或者在 npm
 账号设置里给这个包绑定 trusted publisher 后走 CI。
 
-**`npm error code E403 — You do not have permission to publish`**
+**`E403 — You do not have permission to publish`**
 包名已被别人占用，或当前登录账号不是 `dsh-plugin-upgrader` 的所有者。
 
-**`npm error 404 Not Found - PUT https://registry.npmjs.org/...`（在 CI 里）**
+**`404 Not Found - PUT https://registry.npmjs.org/...`（在 CI 里）**
 trusted publisher 的三项配置（owner / repo / workflow 文件名）和实际仓库不一致，
 或者 workflow 里没给 `id-token: write` 权限。
 
+**CI 报 `ERR_PNPM_NO_LOCKFILE` / `--frozen-lockfile` 失败**
+`pnpm-lock.yaml` 没提交。改完依赖记得 `pnpm install` 后把 lockfile 一起提交。
+
 **发布到了镜像站**
-说明 `package.json` 的 `publishConfig.registry` 被删了，检查一下。
+说明 `.npmrc` 和 `package.json` 的 `publishConfig.registry` 被删了，检查一下。
 
 **装到 DSH 后「发现」里搜不到**
 插件「发现」标签的数据来自 npm registry 索引，发布后通常要等几分钟到几小时刷新。

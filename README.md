@@ -120,7 +120,7 @@ dsh-plugin-upgrader/
 │       ├── format.ts     版本号 / 日期 / 外部链接
 │       ├── env.ts        window 上的最小类型声明
 │       └── types.ts      载荷类型
-├── lib/                  构建产物（git 忽略，`npm run build` 生成）
+├── lib/                  构建产物（git 忽略，`pnpm run build` 生成）
 │   ├── index.js          宿主端入口（tsc 输出）
 │   ├── host/*.js         宿主端模块 + .d.ts
 │   └── client.js         浏览器端单文件 bundle（含 __ModuleLoader__ 包装）
@@ -139,17 +139,20 @@ dsh-plugin-upgrader/
 
 ## 开发
 
+本项目用 pnpm 管理依赖（`package.json` 里钉了 `packageManager`，CI 也用 pnpm）：
+
 ```bash
-npm run build      # tsc 编译宿主端 + esbuild 打包 client → lib/
-npm run typecheck  # tsc 检查 src 和 test
-npm test           # node:test 单元测试（.ts 直接运行）
-npm run check      # 以上全部（typecheck + build + test）
+pnpm install       # 安装依赖（会自动跑 prepare → 构建一次）
+pnpm run build     # tsc 编译宿主端 + esbuild 打包 client → lib/
+pnpm run typecheck # tsc 检查 src 和 test
+pnpm test          # node:test 单元测试（.ts 直接运行）
+pnpm run check     # 以上全部（typecheck + build + test）
 ```
 
 宿主端在 `src/index.ts`（`webServer` 前缀路由 `/api/plugin-upgrader`），
 浏览器端在 `src/client/index.ts`（注册 `plugins.tab` 槽位）。
 
-改完代码后必须重新 `npm run build`（profile 里的 `link:` 指向本目录，
+改完代码后必须重新 `pnpm run build`（profile 里的 `link:` 指向本目录，
 但加载的是 `lib/`，不是 `src/`）。然后让宿主重新加载本插件即可，无需重启应用：
 先 `pluginManager.setBundleEnabled(name, false)` 再 `setBundleEnabled(name, true)`。
 
@@ -158,7 +161,7 @@ npm run check      # 以上全部（typecheck + build + test）
 见 [RELEASING.md](./RELEASING.md)。首次手动发一次，之后打 `v*` tag 由 CI 通过 npm trusted publishing 自动发布：
 
 ```bash
-npm publish --access public   # 仅首次
+pnpm publish --access public   # 仅首次
 ```
 
 ## 许可

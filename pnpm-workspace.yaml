@@ -1,0 +1,8 @@
+# pnpm settings for this repository. Since pnpm 10 these live here rather than in
+# package.json, which is why this file exists even though the repository is a
+# single package.
+
+# esbuild's install script fetches the platform binary; the client bundle cannot
+# be built without it, so the script is explicitly allowed.
+allowBuilds:
+  esbuild: true

@@ -19,6 +19,7 @@
   "bugs": {
     "url": "https://github.com/zuwenyin/dsh-plugin-upgrader/issues"
   },
+  "packageManager": "pnpm@11.9.0",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -59,7 +60,7 @@
     "prepare": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "node --test",
-    "check": "npm run typecheck && npm run build && npm test"
+    "check": "pnpm run typecheck && pnpm run build && pnpm test"
   },
   "dsh": {
     "bundle": {

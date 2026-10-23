@@ -136,7 +136,7 @@ dsh-plugin-upgrader/
 │       ├── format.ts     versions / dates / external links
 │       ├── env.ts        minimal window typings
 │       └── types.ts      payload types
-├── lib/                  build output (git-ignored, produced by `npm run build`)
+├── lib/                  build output (git-ignored, produced by `pnpm run build`)
 │   ├── index.js          host entry (tsc output)
 │   ├── host/*.js         host modules plus .d.ts
 │   └── client.js         the browser bundle, wrapped in __ModuleLoader__
@@ -155,18 +155,22 @@ siblings, so the split happens in the sources only.
 
 ## Development
 
+Dependencies are managed with pnpm (`packageManager` is pinned in `package.json`,
+and CI uses pnpm too):
+
 ```bash
-npm run build      # tsc for the host + esbuild for the client → lib/
-npm run typecheck  # tsc over src and test
-npm test           # node:test unit tests (.ts runs directly)
-npm run check      # all of the above (typecheck + build + test)
+pnpm install       # installs dependencies (runs prepare → one build)
+pnpm run build     # tsc for the host + esbuild for the client → lib/
+pnpm run typecheck # tsc over src and test
+pnpm test          # node:test unit tests (.ts runs directly)
+pnpm run check     # all of the above (typecheck + build + test)
 ```
 
 The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
 `plugins.tab` slot).
 
-Re-run `npm run build` after editing — the profile's `link:` points at this
+Re-run `pnpm run build` after editing — the profile's `link:` points at this
 directory but loads `lib/`, not `src/`. Then reload the plugin, no app restart
 needed: call `pluginManager.setBundleEnabled(name, false)` and then
 `setBundleEnabled(name, true)`.

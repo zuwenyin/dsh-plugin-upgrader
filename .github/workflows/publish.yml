@@ -13,21 +13,23 @@ jobs:
       id-token: write # npm trusted publishing (OIDC) — no long-lived token needed
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: npm
+          cache: pnpm
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       # Typecheck, build lib/ from src/ and run the unit tests. `prepare` also
       # builds, but running check first keeps a broken build off the registry.
       - name: Check
-        run: npm run check
+        run: pnpm run check
       # Trusted publishing: GitHub mints a short-lived OIDC token and npm
       # verifies it against the trusted publisher configured for this package,
       # so there is no NPM_TOKEN secret to leak or rotate.
       # Requires: the package exists on npm and lists this repository +
       # this workflow file as its trusted publisher.
+      # pnpm attaches provenance on its own under trusted publishing.
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        run: pnpm publish --access public
