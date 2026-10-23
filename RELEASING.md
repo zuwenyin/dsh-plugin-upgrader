@@ -53,6 +53,7 @@ pnpm whoami --registry https://registry.npmjs.org
 cd D:\DeepseekHarnessWorkspace\dsh-plugin-upgrader
 
 # 先看一眼会打包哪些文件，确认没有漏东西
+# 正常应该看到 46 个文件 / 约 50 KB：lib/（含 .map）+ locale + 图标 + 补丁 + 文档
 pnpm pack --dry-run
 
 # 正式发布
