@@ -36,15 +36,12 @@
   "files": [
     "lib/**/*.js",
     "lib/**/*.d.ts",
-    "src/**/*.ts",
-    "cordis.patch.yml",
-    "assets/icon.svg",
-    "screenshots/*.png",
-    "screenshots.json",
+    "lib/**/*.map",
     "locale/*.json",
+    "assets/icon.svg",
+    "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "RELEASING.md",
     "LICENSE",
     "CHANGELOG.md"
   ],

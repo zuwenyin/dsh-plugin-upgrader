@@ -21,6 +21,12 @@
   painted by the native control the app's WebView never drew), so selection looked
   broken while the selection bar still counted the rows. The box is now a styled
   element driven by `aria-checked`, and it looks identical on every platform.
+- **A 4.9× smaller package.** The published tarball drops from 196.5 KB to 50.4 KB
+  because `files` no longer ships `screenshots/` (130 KB of storefront images),
+  `screenshots.json`, `RELEASING.md` or `src/**/*.ts` — none of them are read at
+  runtime, and the sources are on GitHub. Sourcemaps *are* shipped now: every
+  `lib/*.js` ends with a `sourceMappingURL` comment, so leaving the maps out only
+  produced 404s in the consumer's devtools.
 
 ## 1.0.0
 
