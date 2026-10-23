@@ -160,6 +160,7 @@ and CI uses pnpm too):
 
 ```bash
 pnpm install       # installs dependencies (runs prepare → one build)
+pnpm run dev       # watch src/, rebuild the host and the client on save
 pnpm run build     # tsc for the host + esbuild for the client → lib/
 pnpm run typecheck # tsc over src and test
 pnpm test          # node:test unit tests (.ts runs directly)
@@ -170,9 +171,15 @@ The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
 `plugins.tab` slot).
 
-Re-run `pnpm run build` after editing — the profile's `link:` points at this
-directory but loads `lib/`, not `src/`. Then reload the plugin, no app restart
-needed: call `pluginManager.setBundleEnabled(name, false)` and then
+`pnpm run dev` runs two watchers side by side: `tsc --watch` owns `lib/index.js`
+and `lib/host/**`, esbuild owns `lib/client.js`, so neither overwrites the other.
+esbuild only strips types, it does not check them — run `pnpm run typecheck` after
+editing the browser half.
+
+Either way the profile's `link:` points at this directory but loads `lib/`, not
+`src/`, so the build has to run. `pnpm run dev` keeps the output current, but the
+plugin itself does **not** hot-reload — reload it without restarting the app by
+calling `pluginManager.setBundleEnabled(name, false)` and then
 `setBundleEnabled(name, true)`.
 
 ## License

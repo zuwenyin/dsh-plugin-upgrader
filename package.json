@@ -57,6 +57,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
     "prepare": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "node --test",

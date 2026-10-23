@@ -143,6 +143,7 @@ dsh-plugin-upgrader/
 
 ```bash
 pnpm install       # 安装依赖（会自动跑 prepare → 构建一次）
+pnpm run dev       # 监听 src/，宿主端和浏览器端改完即编译（Ctrl+C 停止）
 pnpm run build     # tsc 编译宿主端 + esbuild 打包 client → lib/
 pnpm run typecheck # tsc 检查 src 和 test
 pnpm test          # node:test 单元测试（.ts 直接运行）
@@ -152,9 +153,14 @@ pnpm run check     # 以上全部（typecheck + build + test）
 宿主端在 `src/index.ts`（`webServer` 前缀路由 `/api/plugin-upgrader`），
 浏览器端在 `src/client/index.ts`（注册 `plugins.tab` 槽位）。
 
-改完代码后必须重新 `pnpm run build`（profile 里的 `link:` 指向本目录，
-但加载的是 `lib/`，不是 `src/`）。然后让宿主重新加载本插件即可，无需重启应用：
-先 `pluginManager.setBundleEnabled(name, false)` 再 `setBundleEnabled(name, true)`。
+`pnpm run dev` 会并行跑两个监听器：`tsc --watch` 负责 `lib/index.js` 和
+`lib/host/**`，esbuild 负责 `lib/client.js`，两者输出互不覆盖。注意 esbuild
+打包时会直接剥掉类型而不做检查，所以改浏览器端时顺手跑一次 `pnpm run typecheck`。
+
+改完代码后必须重新构建（profile 里的 `link:` 指向本目录，但加载的是 `lib/`，
+不是 `src/`）。`pnpm run dev` 已经替你重建了产物，但**插件本身不会热更新**——
+要让宿主重新加载本插件，无需重启应用：先 `pluginManager.setBundleEnabled(name, false)`
+再 `setBundleEnabled(name, true)`。
 
 ## 发布
 
