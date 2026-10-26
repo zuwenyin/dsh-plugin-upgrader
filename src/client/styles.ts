@@ -27,7 +27,7 @@ export const CSS = `
 .dsh-pu-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); transition: background .15s ease, border-color .15s ease, opacity .15s ease; font-family: inherit; }
 .dsh-pu-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); border-color: var(--dsw-alias-border-l2); }
 .dsh-pu-btn:disabled { opacity: .5; cursor: default; }
-.dsh-pu-btn.is-primary { background: var(--dsw-alias-button-primary-fill); border-color: transparent; color: #fff; }
+.dsh-pu-btn.is-primary { background: var(--dsw-alias-button-primary-fill); border-color: transparent; color: var(--dsw-alias-label-primary-inverted, #fff); }
 .dsh-pu-btn.is-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .dsh-pu-btn.is-ghost { background: transparent; border-color: transparent; color: var(--dsw-alias-label-secondary); padding: 0 8px; }
 .dsh-pu-btn.is-ghost:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }

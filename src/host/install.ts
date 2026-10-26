@@ -49,6 +49,78 @@ export interface StepOutcome {
 /** Allowed per-step actions. */
 export const ACTIONS = new Set<string>(['upgrade', 'switch'])
 
+/** The manager's code for "a live loader fiber still owns this bundle". */
+const IN_USE = 'bundle-in-use'
+
+/**
+ * Read the manager's failure code off a result or a throw.
+ *
+ * `change()` folds operation failures into `result.error`; only a lock or
+ * disposal fault rejects, so both spellings have to be checked.
+ *
+ * @param failure - a result or an error.
+ * @returns the code, when one is present.
+ */
+function codeOf(failure: unknown): string | undefined {
+  if (failure === null || typeof failure !== 'object') return undefined
+  const record = failure as { code?: unknown; error?: { code?: unknown } }
+  if (typeof record.code === 'string') return record.code
+  return typeof record.error?.code === 'string' ? record.error.code : undefined
+}
+
+/**
+ * Remove a bundle, forcing the unload the manager skips for a disabled one.
+ *
+ * `removeBundle` deselects and reloads only when the bundle reads as enabled.
+ * A bundle that is disabled but still has a live loader fiber therefore goes
+ * straight to the "in use" check and is refused, which is the failure behind
+ * every `bundle-in-use` upgrade. `setBundleEnabled` reloads unconditionally, so
+ * turning the bundle off first clears the fiber and the retry succeeds.
+ *
+ * @param manager - the plugin manager.
+ * @param name - the bundle to remove.
+ * @param log - progress sink.
+ * @returns the removal result.
+ */
+async function removeForReplacement(
+  manager: PluginManager,
+  name: string,
+  log: LogSink,
+): Promise<ChangeResult> {
+  let first: ChangeResult | undefined
+  let thrown: unknown
+  try {
+    first = await manager.removeBundle(name)
+  } catch (error) {
+    thrown = error
+  }
+  const code = codeOf(first) ?? codeOf(thrown)
+  if (code !== IN_USE) {
+    if (thrown !== undefined) throw thrown
+    return first as ChangeResult
+  }
+  log(`  ! ${name} is still loaded; unloading it before the retry`)
+  try {
+    const unloaded = await manager.setBundleEnabled(name, false)
+    const unloadCode = codeOf(unloaded)
+    if (unloadCode !== undefined) log(`  ! unload reported ${unloadCode}`)
+  } catch (error) {
+    log(`  ! unload failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  // Once the plugin has been switched off, a second refusal needs the job log
+  // to say so: from the outside, an unload that reported `bundle-in-use` and a
+  // removal that refused for the same reason look identical otherwise.
+  try {
+    return await manager.removeBundle(name)
+  } catch (error) {
+    const retryCode = codeOf(error)
+    if (retryCode === IN_USE) {
+      log(`  ! ${name} is still loaded after unloading; it needs a restart`)
+    }
+    throw error
+  }
+}
+
 /**
  * Re-apply the enabled state a step asked for after the package was replaced.
  *
@@ -143,7 +215,7 @@ export async function runStep(
     log(`remove ${step.name} (replacing an installed dependency)`)
     let removed: ChangeResult
     try {
-      removed = await manager.removeBundle(step.name)
+      removed = await removeForReplacement(manager, step.name, log)
     } catch (error) {
       return {
         ...base,

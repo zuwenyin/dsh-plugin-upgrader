@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **An upgrade no longer dies on `bundle-in-use`.** Replacing a version means
+  remove + install, and `removeBundle` only unloads a bundle it reads as enabled.
+  A plugin that is disabled but still holds a live loader fiber therefore went
+  straight to the "in use" check and was refused, which made every upgrade of a
+  disabled plugin fail. The removal now unloads the bundle first and retries once;
+  a second refusal is reported as "needs a restart" instead of retrying in a loop.
+- **The primary button follows the theme.** Its label colour comes from
+  `--dsw-alias-label-primary-inverted` instead of a hard-coded white, so it stays
+  readable when the host theme uses a light primary fill.
+- **`test/install.test.ts` covers the replacement path** with a fake manager:
+  the remove + install fallback and its fresh request id, the unload retry (both
+  a returned and a thrown `bundle-in-use`, and an unload that itself throws), the
+  enabled-state restore, and `validateStep`.
+
 ## 1.0.3 — 2026-10-26
 
 - **Upgrades report what pnpm is doing.** The host subscribes to
