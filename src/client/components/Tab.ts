@@ -89,26 +89,23 @@ export function Tab(props: TabProps): unknown {
       if (steps.length === 0) return
       setBanner(undefined)
       setBusyName(label)
+      /**
+       * A placeholder for the round trip, not a result: `submitJob` resolves
+       * only once the batch settled, so writing a "queued" snapshot after it
+       * would overwrite the finished one and leave the panel spinning for good.
+       * The first poll replaces this within a frame.
+       */
+      setJob({ id: '', status: 'queued', total: steps.length, done: 0, failed: 0, log: [] })
       const outcome = await submitJob(steps, watch)
       if (!alive.current) return
-      if (outcome.kind === 'started') {
-        setJob({
-          id: outcome.id,
-          status: 'queued',
-          total: steps.length,
-          done: 0,
-          failed: 0,
-          log: [],
-        })
-        return
-      }
-      if (outcome.kind === 'adopted') {
+      if (outcome.kind === 'started' || outcome.kind === 'adopted') {
         // A batch already running is not an error the user caused: adopt it and
         // keep reporting its progress rather than showing a dead "busy".
-        setBanner({ tone: 'warn', text: t('busyAdopted') })
+        if (outcome.kind === 'adopted') setBanner({ tone: 'warn', text: t('busyAdopted') })
         return
       }
       setBusyName(undefined)
+      setJob(undefined)
       const failure = outcome.error
       setBanner({ tone: 'err', text: failure instanceof Error ? failure.message : String(failure) })
     },

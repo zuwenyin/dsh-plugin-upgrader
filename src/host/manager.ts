@@ -131,10 +131,43 @@ export interface PluginManager {
   cancelInstall(requestId: string): Promise<{ status: 'cancelled' | 'too-late' | 'not-running' }>
 }
 
+/**
+ * One chunk of a pnpm run's output.
+ *
+ * The manager streams these while a package operation runs, which is the only
+ * way to see what pnpm is doing: an upgrade that stalls on a registry timeout
+ * reports nothing else for minutes.
+ */
+export interface InstallLogChunk {
+  /** The installation the run belongs to, when its caller supplied an id. */
+  requestId?: string
+  jobId: string
+  argv: readonly string[]
+  cwd: string
+  stream: 'stdout' | 'stderr'
+  text: string
+  /** Present on the run's last chunk. */
+  exitCode?: number | null
+}
+
+/**
+ * The phase one installation moved into.
+ *
+ * `installing` is announced once per registry the installation asks, so
+ * `attempt` is the only place a fallback retry becomes visible.
+ */
+export interface InstallState {
+  requestId: string
+  phase: 'installing' | 'cancelling' | 'applying'
+  attempt?: { registry: string | null; index: number; total: number }
+}
+
 /** The host plugin context, as far as this plugin reads it. */
 export interface HostContext {
   get(name: string, strict: false): unknown
   effect(callback: () => () => void, label?: string): void
+  on(name: 'plugin-manager/install-log', listener: (chunk: InstallLogChunk) => void): () => void
+  on(name: 'plugin-manager/install-state', listener: (state: InstallState) => void): () => void
   webServer: WebServer
 }
 

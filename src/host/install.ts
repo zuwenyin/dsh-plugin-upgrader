@@ -12,6 +12,16 @@ import type { ChangeResult, PluginManager, StepRecord } from './manager.ts'
 /** Progress sink for one job. */
 export type LogSink = (message: string) => void
 
+/**
+ * Called with the id of the installation currently in flight.
+ *
+ * `runStep` mints the id it hands the manager, and cancellation needs exactly
+ * that id: the manager answers `not-running` for anything else. Reporting it
+ * here lets the job record stay cancellable across the whole step, including
+ * the removal a version replacement starts with.
+ */
+export type RequestIdSink = (requestId: string) => void
+
 /** One step's outcome, including every failure stage. */
 export interface StepOutcome {
   name: string
@@ -91,16 +101,19 @@ export async function restoreEnabledState(
  * @param manager - the plugin manager.
  * @param step - the requested change.
  * @param log - progress sink.
+ * @param announce - receives the request id the step installs under.
  * @returns the outcome record.
  */
 export async function runStep(
   manager: PluginManager,
   step: StepRecord,
   log: LogSink,
+  announce?: RequestIdSink,
 ): Promise<StepOutcome> {
   const spec = `${step.name}@${step.version}`
   const requestId =
     globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  announce?.(requestId)
   const buildApproval =
     Array.isArray(step.approveBuilds) && step.approveBuilds.length > 0
       ? { approvedBuilds: step.approveBuilds }
@@ -150,11 +163,17 @@ export async function runStep(
         detail: removed?.error?.diagnostic,
       }
     }
+    // A fresh id, not `undefined`: the re-install has to stay cancellable, and
+    // reusing the first one races the manager dropping the settled request.
+    const retryId =
+      globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    announce?.(retryId)
     try {
-      result = await manager.installBundle(spec, { ...options, requestId: undefined })
+      result = await manager.installBundle(spec, { ...options, requestId: retryId })
     } catch (error) {
       return {
         ...base,
+        requestId: retryId,
         ok: false,
         stage: 'install',
         application: 'failed',
@@ -162,11 +181,15 @@ export async function runStep(
       }
     }
   }
-  const enabled = await restoreEnabledState(manager, step, restoreEnabled, log)
+  // Only a change that landed has an enabled state to restore: a failed install
+  // left nothing behind, and asking to toggle it would report a second, louder
+  // error (`operation-error`) for a package that was never added.
+  const installed = result?.application === 'applied' || result?.application === 'restart-required'
+  const enabled = installed ? await restoreEnabledState(manager, step, restoreEnabled, log) : undefined
   return {
     ...base,
     ...(enabled === undefined ? {} : { enabled }),
-    ok: result?.application === 'applied' || result?.application === 'restart-required',
+    ok: installed,
     application: result?.application,
     changed: result?.changed === true,
     stage: result?.stage,

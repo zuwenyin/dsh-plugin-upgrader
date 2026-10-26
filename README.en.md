@@ -18,6 +18,9 @@ English · [中文](./README.md)
 
 - **One-click upgrade** — bump every upgradable plugin to its newest version, with
   progress, per-plugin results and failure reasons.
+- **Progress you can actually see** — the raw pnpm output (registry retries, lockfile
+  verification), a live elapsed clock per step, an indeterminate bar while a step
+  runs, and a cancel button that works.
 - **Multi-select upgrade** — tick any subset of plugins and upgrade only those.
 - **Version history / rollback** — expand any plugin to see every published version
   (with publish date and engine requirement) and switch to it in one click.
@@ -75,8 +78,8 @@ host half:
 | --- | --- |
 | `GET /api/plugin-upgrader/overview` | installed plugins plus their published versions (registry packument, 5-minute cache, 10-second timeout) |
 | `POST /api/plugin-upgrader/job` | queue a batch of upgrade / switch steps, return a job id immediately |
-| `GET /api/plugin-upgrader/job?id=…` | poll progress and per-plugin results |
-| `POST /api/plugin-upgrader/cancel` | abort the step in flight |
+| `GET /api/plugin-upgrader/job?id=…` | poll progress, current phase, elapsed time, per-plugin results and the live log |
+| `POST /api/plugin-upgrader/cancel` | abort the step in flight, including the second install of a remove + install |
 
 Every route is loopback-only: a batch installs packages, so a paired remote device
 or a cross-site page must never reach it.
@@ -94,6 +97,29 @@ Removing a plugin drops its enabled / disabled state, so each step re-applies
 `setBundleEnabled` with the state it had before the upgrade. A disabled plugin stays
 disabled after being upgraded.
 
+### Why an upgrade sometimes takes minutes
+
+Not this plugin: pnpm. Before installing, pnpm 11 re-checks every lockfile entry
+against the registry (`Verifying lockfile against supply-chain policies`), and a
+mirror such as `registry.npmmirror.com` answers `ETIMEDOUT` for plenty of packages,
+which starts a 10-second → 1-minute retry ladder. Upgrading an already-installed
+package additionally costs two pnpm runs (remove, then install).
+
+The old build showed nothing during that time and moved the bar once per completed
+step, so it read as a hang. The host now subscribes to
+`plugin-manager/install-log` and `plugin-manager/install-state` and streams pnpm's
+own output, the phase and the retry count into the job log, while the panel shows an
+elapsed clock and an indeterminate bar — a slow install looks like a retrying one
+instead of a frozen 0%.
+
+Two related bugs fixed with it:
+
+- The heartbeat is a timer (2 s), no longer a write per completed step. A single step
+  lasting over 15 minutes used to be declared abandoned, cancelling a healthy job and
+  letting a second batch start on the same profile.
+- The second install of a remove + install passed `requestId: undefined`, making that
+  stretch uncancellable. Every install now has its own id, so cancel works throughout.
+
 ### One batch at a time
 
 The host runs one job at a time. A second submission gets `409 busy` with the id of
@@ -104,7 +130,7 @@ error:
   the running batch
 - `overview` carries an `active` field, so a freshly mounted tab reconnects to work
   in progress
-- a job writes a heartbeat every few seconds; a job left behind by a host restart is
+- a job re-stamps a heartbeat every 2 seconds; a job left behind by a host restart is
   declared abandoned once the heartbeat goes stale, so it cannot block every later
   upgrade with a permanent `busy`
 

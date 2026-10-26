@@ -77,8 +77,15 @@ export interface JobSnapshot {
   done: number
   failed: number
   current?: string
+  /** What the current step is doing, when the host knows. */
+  phase?: 'installing' | 'cancelling' | 'applying' | 'waiting'
+  /** Which registry is being tried, out of how many. */
+  attempt?: { index: number; total: number; registry: string | null }
   startedAt?: number
+  /** When the current step started; drives the live elapsed clock. */
+  stepStartedAt?: number
   finishedAt?: number
+  abandoned?: boolean
   log: string[]
   results?: StepResult[]
 }

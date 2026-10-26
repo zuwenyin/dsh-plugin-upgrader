@@ -87,7 +87,10 @@ export const CSS = `
 .dsh-pu-job-head { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .dsh-pu-job-head .dsh-pu-grow { flex: 1; min-width: 0; }
 .dsh-pu-bar { height: 4px; border-radius: 999px; background: var(--dsw-alias-bg-layer-3); overflow: hidden; }
-.dsh-pu-bar div { height: 100%; border-radius: 999px; background: var(--dsw-alias-brand-primary); transition: width .25s ease; }
+.dsh-pu-bar-inner { height: 100%; border-radius: 999px; background: var(--dsw-alias-brand-primary); transition: width .25s ease; }
+.dsh-pu-bar-inner.is-busy { width: 40%; transition: none; animation: dsh-pu-indeterminate 1.4s ease-in-out infinite; }
+@keyframes dsh-pu-indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+.dsh-pu-hint { font-size: 11px; color: var(--dsw-alias-label-tertiary); }
 .dsh-pu-log { max-height: 160px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; line-height: 1.55; color: var(--dsw-alias-label-secondary); white-space: pre-wrap; word-break: break-word; border-top: 1px dashed var(--dsw-alias-border-l1); padding-top: 8px; margin: 0; }
 .dsh-pu-banner { display: flex; align-items: center; gap: 8px; font-size: 11.5px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); }
 .dsh-pu-banner.is-warn { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-primary); }
@@ -95,5 +98,5 @@ export const CSS = `
 .dsh-pu-foot { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--dsw-alias-label-tertiary); flex-wrap: wrap; }
 .dsh-pu-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--dsw-alias-border-l2); border-top-color: var(--dsw-alias-brand-primary); animation: dsh-pu-spin .8s linear infinite; flex: none; }
 @keyframes dsh-pu-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .dsh-pu-spin { animation-duration: 2.4s; } }
+@media (prefers-reduced-motion: reduce) { .dsh-pu-spin { animation-duration: 2.4s; } .dsh-pu-bar-inner.is-busy { animation-duration: 3s; } }
 `

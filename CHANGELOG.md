@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.0.3 — 2026-10-26
+
+- **Upgrades report what pnpm is doing.** The host subscribes to
+  `plugin-manager/install-log` and `plugin-manager/install-state`, so pnpm's own
+  output ("Verifying lockfile against supply-chain policies", `ETIMEDOUT` retries,
+  registry fallbacks) now streams into the job log while the step runs, instead of
+  only surfacing after it ends. An upgrade that sits for five minutes on the mirror
+  retry ladder finally looks like what it is.
+- **The progress bar is honest about long steps.** While a step is in flight the
+  panel shows a live elapsed clock, the phase (`installing` / `applying` /
+  `cancelling`), the registry attempt when a fallback is in progress, and an
+  indeterminate bar. `done/total` only moves when a step really finishes, which
+  previously left it pinned at 0% for minutes.
+- **Cancel works at every stage.** The second install of a remove + install used to
+  pass `requestId: undefined`, so that whole stretch was uncancellable; each install
+  now mints its own id and the job reports it back. Cancelling also explains what
+  happened: settled already, past the point of no return, or stopping now.
+- **The heartbeat is a timer (2 s) instead of a per-step write.** A single step over
+  the 15-minute stale window was declared abandoned mid-work, which both killed a
+  healthy job and let a second batch start against the same profile.
+- **A failed install no longer tries to restore the enabled state** of a package it
+  never added, which used to report a second `operation-error` on top of the real
+  failure.
+- **The panel no longer sticks after a batch settles.** `submitJob` resolves only
+  after the whole batch finished, and the tab wrote a fresh `queued` snapshot over
+  the result, leaving the spinner and the disabled buttons behind until the tab was
+  remounted.
+
 ## 1.0.1 — 2026-10-23
 
 - **Rewritten in TypeScript.** The whole project is now typed; `pnpm run typecheck`

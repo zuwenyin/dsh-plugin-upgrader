@@ -67,6 +67,26 @@ export function openExternal(url: string | undefined): void {
 }
 
 /**
+ * Format a duration for the progress line.
+ *
+ * Installs that look stuck are usually just slow, and a number that keeps
+ * moving is the difference between "working" and "frozen" for the user.
+ *
+ * @param ms - elapsed milliseconds.
+ * @returns a short duration such as `12s` or `2m 05s`.
+ */
+export function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '0s'
+  const total = Math.floor(ms / 1000)
+  if (total < 60) return `${total}s`
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  if (minutes < 60) return `${minutes}m ${String(seconds).padStart(2, '0')}s`
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`
+}
+
+/**
  * Resolve a version row's GitHub target.
  *
  * The host sends either a full address or a repository-relative path, and both

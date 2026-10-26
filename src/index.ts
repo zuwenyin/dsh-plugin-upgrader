@@ -28,6 +28,8 @@ import { runStep, validateStep, type StepOutcome } from './host/install.ts'
 import {
   asPluginManager,
   type HostContext,
+  type InstallLogChunk,
+  type InstallState,
   type PackumentEntryLike,
   type PluginManager,
   type TagEntryLike,
@@ -54,19 +56,31 @@ const JOB_RETENTION_MS = 10 * 60 * 1000
 
 /**
  * A job that stops reporting progress for this long is treated as abandoned
- * and no longer blocks new work. Installs report progress per step, so a step
- * that legitimately runs longer than this is a hung child process, not work.
+ * and no longer blocks new work.
+ *
+ * The heartbeat is a timer, not a per-step write: a single installation can
+ * legitimately run for minutes while pnpm verifies a lockfile, and that work is
+ * not visible as a finished step.
  */
 const STALE_JOB_MS = 15 * 60 * 1000
 
+/** How often a running job re-stamps its heartbeat, independently of steps. */
+const HEARTBEAT_MS = 2 * 1000
+
 /** How many log lines one job keeps for the panel. */
-const JOB_LOG_LIMIT = 200
+const JOB_LOG_LIMIT = 400
+
+/** How many characters of pnpm output one job keeps across all its steps. */
+const JOB_LOG_CHARS = 24 * 1024
 
 /** How many log lines the overview ships for a job the tab adopts. */
-const ADOPTED_LOG_LIMIT = 40
+const ADOPTED_LOG_LIMIT = 60
 
 /** Lifecycle of one batch. */
 type JobStatus = 'queued' | 'running' | 'finished' | 'cancelled'
+
+/** The manager phase a step is in, as the panel shows it. */
+type Phase = InstallState['phase'] | 'waiting'
 
 /** One batch of steps, as the browser polls it. */
 interface JobRecord {
@@ -77,13 +91,24 @@ interface JobRecord {
   failed: number
   results: StepOutcome[]
   log: string[]
+  /** Characters kept in `log`, so a chatty pnpm run cannot grow without limit. */
+  logChars: number
   cancelled: boolean
   startedAt: number
   finishedAt?: number
   heartbeatAt?: number
+  /** The step being worked on, when one is in flight. */
   current?: string
+  /** When that step started, so the panel can show a live elapsed time. */
+  stepStartedAt?: number
+  /** What that step is doing right now. */
+  phase?: Phase
+  /** 1-based number of the registry being tried, and how many there are. */
+  attempt?: { index: number; total: number; registry: string | null }
   cacheDirty?: boolean
   abandoned?: boolean
+  /** The request ids this job has run under, newest last. */
+  requestIds: string[]
 }
 
 /** One step as the request body carries it, before validation. */
@@ -93,7 +118,6 @@ interface RawStep {
   action?: 'upgrade' | 'switch'
   enabled?: boolean
   approveBuilds?: string[]
-  requestId?: string
 }
 
 /**
@@ -106,11 +130,35 @@ export function apply(ctx: HostContext): void {
   const tagCache = new Map<string, TagEntryLike>()
   const jobs = new Map<string, JobRecord>()
   let inFlight: { requestId: string } | null = null
+  /** The job a manager event belongs to, while one is running. */
+  let liveJob: JobRecord | null = null
 
   const pruneJobs = (): void => {
     const cutoff = Date.now() - JOB_RETENTION_MS
     for (const [id, job] of jobs) {
       if (job.finishedAt !== undefined && job.finishedAt < cutoff) jobs.delete(id)
+    }
+  }
+
+  /**
+   * Append one line, dropping the oldest once the job holds too much text.
+   *
+   * @param job - the job to append to.
+   * @param message - the text of the line.
+   */
+  const appendLog = (job: JobRecord, message: string): void => {
+    const text = message.trimEnd()
+    if (text === '') return
+    for (const line of text.split(/\r?\n/)) {
+      if (line.trim() === '') continue
+      job.log.push(line)
+      job.logChars += line.length
+    }
+    while (job.logChars > JOB_LOG_CHARS && job.log.length > 1) {
+      job.logChars -= job.log.shift()?.length ?? 0
+    }
+    while (job.log.length > JOB_LOG_LIMIT) {
+      job.logChars -= job.log.shift()?.length ?? 0
     }
   }
 
@@ -120,6 +168,11 @@ export function apply(ctx: HostContext): void {
   /**
    * Run a batch job to completion in the background.
    *
+   * The heartbeat is a timer, not a per-step write. One upgrade can spend
+   * minutes inside a single pnpm run — verifying a lockfile, retrying a
+   * registry — and none of that finishes a step, so a step-driven heartbeat
+   * would declare a healthy job abandoned and let a second batch start.
+   *
    * @param job - the mutable job record.
    * @param steps - the requested steps.
    */
@@ -128,33 +181,54 @@ export function apply(ctx: HostContext): void {
     if (manager === undefined) {
       job.status = 'finished'
       job.finishedAt = Date.now()
-      job.log.push('job failed: plugin manager unavailable')
+      appendLog(job, 'job failed: plugin manager unavailable')
       return
     }
     job.status = 'running'
     job.heartbeatAt = Date.now()
-    for (const step of steps) {
-      if (job.cancelled) break
-      inFlight = { requestId: step.requestId ?? '' }
-      job.current = `${step.name}@${step.version}`
-      job.log.push(`→ ${job.current}`)
-      const outcome = await runStep(manager, step, (message) => {
-        job.log.push(message)
-        if (job.log.length > JOB_LOG_LIMIT) job.log.splice(0, job.log.length - JOB_LOG_LIMIT)
-      })
-      inFlight = null
+    liveJob = job
+    const beat = setInterval(() => {
       job.heartbeatAt = Date.now()
-      job.results.push(outcome)
-      job.done = job.results.length
-      if (!outcome.ok) job.failed += 1
-      job.log.push(
-        outcome.ok
-          ? `✓ ${job.current} ${outcome.application ?? 'applied'}`
-          : `✗ ${job.current} ${outcome.message ?? 'failed'}`,
-      )
+    }, HEARTBEAT_MS)
+    try {
+      for (const step of steps) {
+        if (job.cancelled) break
+        job.current = `${step.name}@${step.version}`
+        job.stepStartedAt = Date.now()
+        job.phase = 'waiting'
+        job.attempt = undefined
+        appendLog(job, `→ ${job.current}`)
+        const outcome = await runStep(
+          manager,
+          step,
+          (message) => appendLog(job, message),
+          (requestId) => {
+            job.requestIds.push(requestId)
+            inFlight = { requestId }
+          },
+        )
+        inFlight = null
+        job.heartbeatAt = Date.now()
+        job.results.push(outcome)
+        job.done = job.results.length
+        if (!outcome.ok) job.failed += 1
+        appendLog(
+          job,
+          outcome.ok
+            ? `✓ ${job.current} ${outcome.application ?? 'applied'}`
+            : `✗ ${job.current} ${outcome.message ?? 'failed'}`,
+        )
+      }
+    } finally {
+      clearInterval(beat)
+      liveJob = null
+      inFlight = null
     }
     job.status = job.cancelled ? 'cancelled' : 'finished'
     job.current = undefined
+    job.stepStartedAt = undefined
+    job.phase = undefined
+    job.attempt = undefined
     job.finishedAt = Date.now()
     job.cacheDirty = true
   }
@@ -173,7 +247,7 @@ export function apply(ctx: HostContext): void {
       job.abandoned = true
       job.current = undefined
       job.finishedAt = Date.now()
-      job.log.push('! job abandoned: no progress for 15 minutes')
+      appendLog(job, '! job abandoned: no progress for 15 minutes')
     }
     return undefined
   }
@@ -220,6 +294,9 @@ export function apply(ctx: HostContext): void {
                   failed: live.failed,
                   current: live.current,
                   startedAt: live.startedAt,
+                  stepStartedAt: live.stepStartedAt,
+                  phase: live.phase,
+                  attempt: live.attempt,
                   log: live.log.slice(-ADOPTED_LOG_LIMIT),
                 },
           jobs: [...jobs.entries()]
@@ -272,14 +349,16 @@ export function apply(ctx: HostContext): void {
           failed: 0,
           results: [],
           log: [],
+          logChars: 0,
           cancelled: false,
           startedAt: Date.now(),
+          requestIds: [],
         }
         jobs.set(id, job)
         void runJob(job, steps as RawStep[]).catch((error: unknown) => {
           job.status = 'finished'
           job.finishedAt = Date.now()
-          job.log.push(`job failed: ${error instanceof Error ? error.message : String(error)}`)
+          appendLog(job, `job failed: ${error instanceof Error ? error.message : String(error)}`)
         })
         writeJson(res, 202, { id })
         return
@@ -291,7 +370,22 @@ export function apply(ctx: HostContext): void {
           writeJson(res, 404, { error: 'unknown-job' })
           return
         }
-        writeJson(res, 200, job)
+        writeJson(res, 200, {
+          id: job.id,
+          status: job.status,
+          total: job.total,
+          done: job.done,
+          failed: job.failed,
+          current: job.current,
+          phase: job.phase,
+          attempt: job.attempt,
+          startedAt: job.startedAt,
+          stepStartedAt: job.stepStartedAt,
+          finishedAt: job.finishedAt,
+          abandoned: job.abandoned,
+          log: job.log,
+          results: job.results,
+        })
         return
       }
       if (req.method === 'POST' && route === 'cancel') {
@@ -301,11 +395,20 @@ export function apply(ctx: HostContext): void {
           return
         }
         running.cancelled = true
+        appendLog(running, '! cancel requested')
         const manager = requireManager()
-        const target = inFlight
-        if (manager !== undefined && target !== null && target.requestId !== '') {
+        const target = inFlight?.requestId ?? running.requestIds.at(-1)
+        if (manager !== undefined && target !== undefined && target !== '') {
           try {
-            await manager.cancelInstall(target.requestId)
+            const outcome = await manager.cancelInstall(target)
+            appendLog(
+              running,
+              outcome.status === 'not-running'
+                ? '! the installation already settled; the batch stops after it'
+                : outcome.status === 'too-late'
+                  ? '! past the point of cancellation; finishing the current step'
+                  : 'stopping the running installation…',
+            )
           } catch {
             /* the step settles on its own; the flag above already stops the batch */
           }
@@ -322,6 +425,76 @@ export function apply(ctx: HostContext): void {
       writeJson(res, status, { error: error instanceof Error ? error.message : String(error) })
     }
   }
+
+  /**
+   * Mirror the manager's running pnpm output and phases into the job log.
+   *
+   * Without this the panel has nothing to show between a step starting and
+   * finishing: a lockfile verification or a registry retry can occupy minutes.
+   * Chunks from a removal carry no request id (the manager only tags the runs
+   * its caller identified), so a chunk with no id is attributed to whatever job
+   * is live — there is only ever one.
+   *
+   * The listeners are optional: a host whose manager does not emit these
+   * events must still load the tab, so a failed subscription is ignored and
+   * the panel simply falls back to per-step progress.
+   *
+   * @param name - the event name.
+   * @param listener - the callback.
+   * @param label - the effect label.
+   */
+  const subscribe = (name: string, listener: (payload: never) => void, label: string): void => {
+    try {
+      ctx.effect(
+        () => ctx.on(name as 'plugin-manager/install-log', listener as (chunk: InstallLogChunk) => void),
+        label,
+      )
+    } catch {
+      /* the panel degrades to step-level progress */
+    }
+  }
+
+  subscribe(
+    'plugin-manager/install-log',
+    (chunk: InstallLogChunk) => {
+      const job = liveJob
+      if (job === null) return
+      const tagged = chunk.requestId !== undefined && chunk.requestId !== ''
+      if (tagged && !job.requestIds.includes(chunk.requestId as string)) return
+      if (chunk.exitCode !== undefined && chunk.exitCode !== 0 && chunk.exitCode !== null) {
+        appendLog(job, `! pnpm exited with ${chunk.exitCode}`)
+      }
+      appendLog(job, chunk.text)
+    },
+    'plugin-upgrader: install output',
+  )
+
+  subscribe(
+    'plugin-manager/install-state',
+    (state: InstallState) => {
+      const job = liveJob
+      if (job === null) return
+      if (!job.requestIds.includes(state.requestId)) return
+      job.phase = state.phase
+      job.attempt =
+        state.attempt === undefined
+          ? undefined
+          : {
+              index: state.attempt.index,
+              total: state.attempt.total,
+              registry: state.attempt.registry,
+            }
+      if (state.attempt !== undefined && state.attempt.total > 1) {
+        appendLog(
+          job,
+          `registry ${state.attempt.index}/${state.attempt.total}: ${state.attempt.registry ?? 'default'}`,
+        )
+      } else if (state.phase === 'applying') {
+        appendLog(job, 'applying the change…')
+      }
+    },
+    'plugin-upgrader: install phase',
+  )
 
   ctx.effect(
     () => ctx.webServer.register({ kind: 'prefix', path: API_PREFIX, handler }),
