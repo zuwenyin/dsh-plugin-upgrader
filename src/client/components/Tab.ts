@@ -53,6 +53,18 @@ export function Tab(props: TabProps): unknown {
       setBusyName(undefined)
       setCancelling(false)
       reload(false)
+      /**
+       * Polling returns nothing when the tab unmounted *or* when the host
+       * stopped answering — the job was dropped by a restart, or the request
+       * failed. The panel would otherwise keep the last `running` snapshot on
+       * screen with its clock climbing, which reads as a hang that never ends.
+       * Re-read the overview and say the status was lost instead.
+       */
+      if (settled === undefined) {
+        setJob(undefined)
+        setBanner({ tone: 'warn', text: t('lostJob') })
+        return settled
+      }
       const failures = Array.isArray(settled?.results) ? settled.results.filter((result) => result.ok !== true) : []
       if (failures.length > 0) {
         setBanner({

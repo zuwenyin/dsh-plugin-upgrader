@@ -25,6 +25,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type StepOutcome } from './host/install.ts'
+import { nextPhase, type Phase } from './host/progress.ts'
 import {
   asPluginManager,
   type HostContext,
@@ -78,9 +79,6 @@ const ADOPTED_LOG_LIMIT = 60
 
 /** Lifecycle of one batch. */
 type JobStatus = 'queued' | 'running' | 'finished' | 'cancelled'
-
-/** The manager phase a step is in, as the panel shows it. */
-type Phase = InstallState['phase'] | 'waiting'
 
 /** One batch of steps, as the browser polls it. */
 interface JobRecord {
@@ -465,6 +463,12 @@ export function apply(ctx: HostContext): void {
         appendLog(job, `! pnpm exited with ${chunk.exitCode}`)
       }
       appendLog(job, chunk.text)
+      /**
+       * The manager's `install-state` event is optional. Without this, a host
+       * that does not emit it leaves the panel on `waiting` for the whole
+       * install, which is what makes a two-minute step read as a hang.
+       */
+      job.phase = nextPhase(job.phase, chunk)
     },
     'plugin-upgrader: install output',
   )

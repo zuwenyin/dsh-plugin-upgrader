@@ -28,6 +28,17 @@ export interface JobPanelProps {
 const CLOCK_MS = 1000
 
 /**
+ * How long the panel trusts a snapshot it has not seen change.
+ *
+ * Polling delivers a fresh object every round, so a snapshot that stops
+ * changing means the tab stopped hearing from the host — a dropped request, a
+ * sleeping window, a host that restarted. The clock has to notice: a step that
+ * "has been running" for eighteen minutes because nobody updated it is worse
+ * than no clock at all.
+ */
+const STALE_SNAPSHOT_MS = 20 * 1000
+
+/**
  * A clock that ticks only while `running`, so a settled panel stops redrawing.
  *
  * @param running - whether time is still passing.
@@ -64,8 +75,17 @@ export function JobPanel(props: JobPanelProps): unknown {
   const failed = job.failed ?? 0
   const inStep = running && job.current !== undefined
   const now = useNow(inStep, job.stepStartedAt)
+  /**
+   * A snapshot is stale when the panel has not seen a *different* one for a
+   * while. `startedAt`/`stepStartedAt`/`done` stand in for the whole payload:
+   * any real progress moves at least one of them.
+   */
+  const stamp = `${job.id}|${job.stepStartedAt ?? ''}|${job.done ?? 0}|${job.status}`
+  const lastChange = React.useRef({ stamp, at: Date.now() })
+  if (lastChange.current.stamp !== stamp) lastChange.current = { stamp, at: Date.now() }
+  const stale = inStep && Date.now() - lastChange.current.at > STALE_SNAPSHOT_MS
   const stepMs =
-    job.stepStartedAt === undefined ? 0 : now - job.stepStartedAt
+    job.stepStartedAt === undefined ? 0 : Math.max(0, now - job.stepStartedAt)
   const phaseKey =
     job.phase === 'installing'
       ? 'phaseInstalling'
@@ -96,8 +116,15 @@ export function JobPanel(props: JobPanelProps): unknown {
         headline,
         job.current === undefined ? null : h('span', { className: 'dsh-pu-mono' }, ` ${job.current}`),
         inStep
-          ? h('span', { className: 'dsh-pu-dim' }, ` · ${phaseText} · ${t('elapsed', formatElapsed(stepMs))}`)
+          ? h(
+              'span',
+              { className: 'dsh-pu-dim' },
+              ` · ${phaseText} · ${t('elapsed', formatElapsed(stepMs))}`,
+            )
           : null,
+        // Once the snapshot stops moving the clock is reporting a number nobody
+        // is updating, so say so instead of letting it climb.
+        stale ? h('span', { className: 'dsh-pu-dim' }, ` · ${t('staleSnapshot')}`) : null,
         job.abandoned === true ? h('span', { className: 'dsh-pu-dim' }, ` · ${t('stalled')}`) : null,
       ),
       failed > 0 ? h('span', { className: 'dsh-pu-tag is-err' }, t('failedSome', failed)) : null,
