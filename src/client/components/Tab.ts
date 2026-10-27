@@ -11,11 +11,30 @@
  */
 import { cancelJob, submitJob, useOverview, watchJob } from '../api.ts'
 import { getH, getReact } from '../env.ts'
-import { activeLocaleId, useAlive, useLocaleRevision } from '../hooks.ts'
+import { activeLocaleId, replacedAppearance, useAlive, useLocaleRevision } from '../hooks.ts'
 import { CSS, STYLE_ID } from '../styles.ts'
 import type { Banner, JobSnapshot, LocaleLike, OverviewRow, OwnerProps, StepRecord, T } from '../types.ts'
 import { JobPanel } from './JobPanel.ts'
 import { PluginRow } from './PluginRow.ts'
+
+/**
+ * This package's own name.
+ *
+ * The row for it is answered differently from every other row: it cannot be
+ * replaced through the batch job, because that job unloads this code before the
+ * install that should follow it could run.
+ */
+const SELF_NAME = 'dsh-plugin-upgrader'
+
+/**
+ * How long a page reload waits after an appearance plugin was replaced.
+ *
+ * The plugin is restarted by the host a moment after the step settles, and a
+ * reload that beats that restart would leave the page unstyled with nothing
+ * left to re-apply it. Long enough to cover the restart, short enough that the
+ * reload still reads as part of the upgrade the person just ran.
+ */
+const APPEARANCE_RELOAD_DELAY_MS = 1200
 
 /** Props of {@link Tab}. */
 export interface TabProps extends OwnerProps {
@@ -67,12 +86,39 @@ export function Tab(props: TabProps): unknown {
       }
       const failures = Array.isArray(settled?.results) ? settled.results.filter((result) => result.ok !== true) : []
       if (failures.length > 0) {
+        /**
+         * `message` is the manager's code (`bundle-in-use`, `not-removable`),
+         * which says nothing about what to do; `detail` is the host's hint at
+         * what the operator can act on. Show the hint when there is one, and
+         * keep the code beside it so a bug report still carries it.
+         */
         setBanner({
           tone: 'err',
-          text: failures.map((failure) => `${failure.name}: ${failure.message ?? failure.detail ?? 'error'}`).join(' · '),
+          text: failures
+            .map((failure) => {
+              const code = failure.message ?? 'error'
+              return failure.detail === undefined
+                ? `${failure.name}: ${code}`
+                : `${failure.name}: ${failure.detail} (${code})`
+            })
+            .join(' · '),
         })
       } else if (settled?.results?.some((result) => result.application === 'restart-required') === true) {
         setBanner({ tone: 'warn', text: t('restart') })
+      } else if (replacedAppearance(settled?.results)) {
+        /**
+         * An appearance plugin was replaced, so the page is now wearing the
+         * host's default look: its stylesheet lived in `<head>` and went away
+         * with the code that injected it. Its own configuration does NOT go
+         * away — `dsh-dream-skin` keeps it in `$DSH_HOME/dream-skin.json` and
+         * rewrites it atomically, which is why reloading restores the look
+         * instead of losing it. Wait a beat so the restart is observed, then
+         * reload once; a banner explains why the page blinked.
+         */
+        setBanner({ tone: 'info', text: t('reloadForAppearance') })
+        window.setTimeout(() => {
+          window.location.reload()
+        }, APPEARANCE_RELOAD_DELAY_MS)
       }
       return settled
     },
@@ -125,7 +171,16 @@ export function Tab(props: TabProps): unknown {
   )
 
   const rows = Array.isArray(data?.bundles) ? data.bundles : []
-  const upgradable = rows.filter((row) => row.upgradable === true)
+  /**
+   * Rows a batch may touch.
+   *
+   * This plugin is excluded on purpose: a batch step for a version change starts
+   * with `removeBundle`, which unloads the code running the batch, so including
+   * it would strand the profile mid-upgrade. Its own row carries a separate
+   * action that goes through the page's installer instead.
+   */
+  const batchable = (row: OverviewRow): boolean => row.upgradable === true && row.name !== SELF_NAME
+  const upgradable = rows.filter(batchable)
   const needle = query.trim().toLowerCase()
   const filtered =
     needle === ''
@@ -160,6 +215,29 @@ export function Tab(props: TabProps): unknown {
     const pendingBuilds = Array.isArray(row.pendingBuilds) ? row.pendingBuilds : []
     void run([stepOf(row, row.latest ?? row.version ?? '', 'upgrade', pendingBuilds)], row.name)
   }
+
+  /**
+   * Upgrade this plugin through the page's own installer.
+   *
+   * The batch job cannot do it: a version change starts with `removeBundle`,
+   * which unloads the plugin that is running the batch, so the install that
+   * should follow never happens. The page's installer is owned by the plugin
+   * manager instead, so it keeps running across the unload. When the page does
+   * not hand a tab an installer there is nothing safe to do, and the row says
+   * why rather than starting a batch that would strand the profile.
+   */
+  const installSelf = React.useCallback(
+    (row: OverviewRow, version: string): void => {
+      const install = props.install
+      if (typeof install !== 'function') {
+        setBanner({ tone: 'warn', text: t('selfUpdateUnavailable') })
+        return
+      }
+      setBanner(undefined)
+      install({ spec: `${row.name}@${version}`, title: row.title, version })
+    },
+    [props.install, t],
+  )
 
   const upgradeAll = (): void => {
     void run(
@@ -355,6 +433,9 @@ export function Tab(props: TabProps): unknown {
               onSwitch: switchOne,
               onApprove: approveAndRetry,
               onOpenPage: typeof props.openPackage === 'function' ? props.openPackage : undefined,
+              self: row.name === SELF_NAME,
+              onInstallSelf: installSelf,
+              onRetryHistory: () => reload(true),
             }),
           ),
         ),

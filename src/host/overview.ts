@@ -1,8 +1,8 @@
 /**
  * The overview payload the Versions tab renders.
  *
- * One request answers everything the tab needs — installed bundles, their
- * published versions, which of them are upgradable — because a per-bundle
+ * One request answers everything the tab needs 鈥?installed bundles, their
+ * published versions, which of them are upgradable 鈥?because a per-bundle
  * request would turn one page open into a dozen round trips.
  *
  * @module dsh-plugin-upgrader/lib/overview
@@ -14,6 +14,7 @@ import {
   cachedTags,
   fetchPackument,
   shapePackument,
+  PACKUMENT_CONCURRENCY,
   type FullPackument,
   type PackumentEntry,
   type TagEntry,
@@ -23,6 +24,40 @@ import type { BundleInfo, HostContext, ManagementError, RegistriesReport, ReadOn
 
 /** Inline data-URL icons above this size are dropped from the overview payload. */
 const INLINE_ICON_LIMIT = 2048
+
+/**
+ * Run `task` over every item, with at most `limit` running at once.
+ *
+ * The first version of this used `Promise.all`, which fired every package
+ * lookup at the mirror simultaneously. Eleven concurrent connections to
+ * `registry.npmmirror.com` timed out, while the same eleven asked one at a time
+ * answered in under 1.2 s 鈥?and each timeout rendered as a plugin with no
+ * version history. The cap is what keeps one page load from becoming a burst.
+ *
+ * @param items - the work items.
+ * @param limit - how many may run at once.
+ * @param task - the work itself.
+ * @returns the results, in the order the items were given.
+ */
+async function mapLimited<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = next
+      next += 1
+      const item = items[index]
+      if (item === undefined) return
+      results[index] = await task(item)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
 
 /** One installed bundle, flattened for the tab. */
 export interface OverviewRow {
@@ -91,68 +126,93 @@ export async function buildOverview(
   const base = registryBase(registries)
   const locale = options.locale === 'zh' ? 'zh' : 'en'
 
-  const rows = await Promise.all(
-    bundles.filter((bundle) => bundle.installed === true).map(async (bundle): Promise<OverviewRow> => {
-      const kind = sourceKind(bundle.source)
-      /** Official rows live inside the installation and cannot be replaced. */
-      const managed = bundle.availability === 'profile' && bundle.installed === true
-      const entry: OverviewRow = {
-        name: bundle.name,
-        version: bundle.version,
-        official: bundle.official === true,
-        availability: bundle.availability,
-        installed: bundle.installed === true,
-        enabled: bundle.enabled === true,
-        removable: bundle.removable === true,
-        managed,
-        source: bundle.source,
-        kind,
-        title: pickText(bundle.meta?.title, locale) ?? bundle.name,
-        description: pickText(bundle.meta?.description ?? bundle.description, locale),
-        icon: inlineIcon(bundle.meta?.icon, INLINE_ICON_LIMIT),
-        readOnlyReason: bundle.readOnlyReason,
-        error: bundle.error ?? null,
-        latest: undefined,
-        repoUrl: undefined,
-        upgradable: false,
-        versions: [],
-        tags: {},
-        totalVersions: 0,
-        versionError: undefined,
-      }
-      if (bundle.version === undefined) {
-        entry.versionError = managed ? 'version unknown' : 'not a profile-managed package'
+  const installed = bundles.filter((bundle) => bundle.installed === true)
+  const rows = await mapLimited(installed, PACKUMENT_CONCURRENCY, async (bundle): Promise<OverviewRow> => {
+    const kind = sourceKind(bundle.source)
+    /** Official rows live inside the installation and cannot be replaced. */
+    const managed = bundle.availability === 'profile' && bundle.installed === true
+    const entry: OverviewRow = {
+      name: bundle.name,
+      version: bundle.version,
+      official: bundle.official === true,
+      availability: bundle.availability,
+      installed: bundle.installed === true,
+      enabled: bundle.enabled === true,
+      removable: bundle.removable === true,
+      managed,
+      source: bundle.source,
+      kind,
+      title: pickText(bundle.meta?.title, locale) ?? bundle.name,
+      description: pickText(bundle.meta?.description ?? bundle.description, locale),
+      icon: inlineIcon(bundle.meta?.icon, INLINE_ICON_LIMIT),
+      readOnlyReason: bundle.readOnlyReason,
+      error: bundle.error ?? null,
+      latest: undefined,
+      repoUrl: undefined,
+      upgradable: false,
+      versions: [],
+      tags: {},
+      totalVersions: 0,
+      versionError: undefined,
+    }
+    if (bundle.version === undefined) {
+      entry.versionError = managed ? 'version unknown' : 'not a profile-managed package'
+      return entry
+    }
+    if (!managed) {
+      entry.versionError = 'not a profile-managed package'
+      return entry
+    }
+    if (kind === 'path') {
+      /**
+       * A `link:`/`file:` dependency has no published history of its own, but it
+       * is not an unanswerable row either: the local directory has a version and
+       * the registry may publish the same package name. Saying only "path
+       * source" left the row with an arrow and no numbers at all, which reads as
+       * a broken plugin. Ask the registry anyway and keep the local version as
+       * what is installed.
+       */
+      const { data } = await fetchPackument(base, bundle.name, cache, options.force === true)
+      if (data === undefined) {
+        entry.versionError = 'local path install: the registry has no published copy'
         return entry
       }
-      if (!managed) {
-        entry.versionError = 'not a profile-managed package'
-        return entry
-      }
-      if (kind !== 'registry' && kind !== 'unknown') {
-        entry.versionError = `${kind} source: no registry history`
-        return entry
-      }
-      const { data, error } = await fetchPackument(base, bundle.name, cache, options.force === true)
-      if (error !== undefined || data === undefined) {
-        entry.versionError = error ?? 'registry lookup failed'
-        return entry
-      }
-      const repoUrl = repoUrlOf(data as PackumentLike)
-      const tagNames = repoUrl === undefined
-        ? undefined
-        : await cachedTags(repoUrl, tagCache, options.force === true)
-      const shaped = shapePackument(data as FullPackument, bundle.version, tagNames)
+      const shaped = shapePackument(data as FullPackument, undefined, undefined)
       entry.latest = shaped.latest
       entry.repoUrl = shaped.repoUrl
       entry.versions = shaped.versions
       entry.tags = shaped.tags
       entry.totalVersions = shaped.totalVersions ?? shaped.versions.length
-      entry.versionError = shaped.versionError
-      entry.upgradable =
-        entry.latest !== undefined && compareVersions(entry.latest, bundle.version) > 0
+      entry.versionError = 'local path install: the version comes from the directory, not the registry'
+      // Never upgradable: replacing a `link:` with a registry tarball would
+      // change how the plugin is installed, which is not an upgrade.
+      entry.upgradable = false
       return entry
-    }),
-  )
+    }
+    if (kind !== 'registry' && kind !== 'unknown') {
+      entry.versionError = `${kind} source: no registry history`
+      return entry
+    }
+    const { data, error } = await fetchPackument(base, bundle.name, cache, options.force === true)
+    if (error !== undefined || data === undefined) {
+      entry.versionError = error ?? 'registry lookup failed'
+      return entry
+    }
+    const repoUrl = repoUrlOf(data as PackumentLike)
+    const tagNames = repoUrl === undefined
+      ? undefined
+      : await cachedTags(repoUrl, tagCache, options.force === true)
+    const shaped = shapePackument(data as FullPackument, bundle.version, tagNames)
+    entry.latest = shaped.latest
+    entry.repoUrl = shaped.repoUrl
+    entry.versions = shaped.versions
+    entry.tags = shaped.tags
+    entry.totalVersions = shaped.totalVersions ?? shaped.versions.length
+    entry.versionError = shaped.versionError
+    entry.upgradable =
+      entry.latest !== undefined && compareVersions(entry.latest, bundle.version) > 0
+    return entry
+  })
 
   rows.sort((left, right) => {
     if (left.upgradable !== right.upgradable) return left.upgradable ? -1 : 1

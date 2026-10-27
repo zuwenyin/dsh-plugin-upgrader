@@ -7,7 +7,7 @@
  *
  * @module dsh-plugin-upgrader/lib/install
  */
-import type { ChangeResult, PluginManager, StepRecord } from './manager.ts'
+import type { BundleInfo, ChangeResult, PluginManager, StepRecord } from './manager.ts'
 
 /** Progress sink for one job. */
 export type LogSink = (message: string) => void
@@ -69,13 +69,89 @@ function codeOf(failure: unknown): string | undefined {
 }
 
 /**
- * Remove a bundle, forcing the unload the manager skips for a disabled one.
+ * What the operator can do about a bundle the loader will not release.
  *
- * `removeBundle` deselects and reloads only when the bundle reads as enabled.
- * A bundle that is disabled but still has a live loader fiber therefore goes
- * straight to the "in use" check and is refused, which is the failure behind
- * every `bundle-in-use` upgrade. `setBundleEnabled` reloads unconditionally, so
- * turning the bundle off first clears the fiber and the retry succeeds.
+ * Attached as the failure's `diagnostic` so the panel can say something better
+ * than the bare code: the removal was refused on the host, and no amount of
+ * retrying inside one process changes it. Both languages travel together
+ * because the job log is a single stream shared by every display language —
+ * the existing `statusMessage` copy is split the same way.
+ *
+ * @param enabled - what the manager reads the bundle as, when known.
+ * @returns one bilingual sentence.
+ */
+function restartHint(enabled: boolean | undefined): string {
+  const disabled = enabled === false
+  const zh = disabled
+    ? '它读起来是禁用状态，但加载器仍持有它的插件行；重启 DSH 后再升级'
+    : '加载器仍持有它的插件行；重启 DSH 后再升级'
+  const en = disabled
+    ? 'the loader still holds its plugin row even though the bundle reads as disabled; restart DSH and upgrade again'
+    : 'the loader still holds its plugin row; restart DSH and upgrade again'
+  return `${zh} / ${en}`
+}
+
+/**
+ * Read whether the manager currently reads a bundle as enabled.
+ *
+ * The distinction matters: a bundle the manager already reads as disabled
+ * cannot be unloaded by asking for disabled again, because that request changes
+ * nothing and therefore disposes nothing.
+ *
+ * @param manager - the plugin manager.
+ * @param name - the bundle to read.
+ * @returns the flag, or `undefined` when the list could not be read.
+ */
+async function readsAsEnabled(manager: PluginManager, name: string): Promise<boolean | undefined> {
+  try {
+    const bundles = await manager.listBundles()
+    const list: BundleInfo[] = Array.isArray(bundles) ? bundles : []
+    return list.find((item) => item?.name === name)?.enabled
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Call `setBundleEnabled`, reporting a refusal instead of throwing it.
+ *
+ * @param manager - the plugin manager.
+ * @param name - the bundle to toggle.
+ * @param enabled - the state to ask for.
+ * @param log - progress sink.
+ * @returns the manager's code, or `undefined` when the call succeeded.
+ */
+async function toggle(
+  manager: PluginManager,
+  name: string,
+  enabled: boolean,
+  log: LogSink,
+): Promise<string | undefined> {
+  try {
+    return codeOf(await manager.setBundleEnabled(name, enabled))
+  } catch (error) {
+    const code = codeOf(error)
+    log(
+      `  ! ${enabled ? `enable ${name}` : 'unload'} failed: ${
+        code ?? (error instanceof Error ? error.message : String(error))
+      }`,
+    )
+    return code ?? 'operation-error'
+  }
+}
+
+/**
+ * Remove a bundle, clearing the loader fiber the manager will not unload.
+ *
+ * `removeBundle` deselects and reloads only when it reads the bundle as
+ * enabled, and the deselect step of a *selection change* is what lets the
+ * reload drop the rows: `reconcileProfile` disposes exactly the rows that the
+ * previous patch list had and the new one does not. A bundle the manager
+ * already reads as disabled therefore cannot be unloaded by asking for
+ * disabled again — the manifest does not change, so nothing is dropped, so the
+ * fiber survives and the retry is refused for the same reason. Re-selecting it
+ * and then deselecting it does produce that change, which is the only lever a
+ * live process has; a fiber that outlives even that needs a restart.
  *
  * @param manager - the plugin manager.
  * @param name - the bundle to remove.
@@ -99,26 +175,49 @@ async function removeForReplacement(
     if (thrown !== undefined) throw thrown
     return first as ChangeResult
   }
+  const enabled = await readsAsEnabled(manager, name)
   log(`  ! ${name} is still loaded; unloading it before the retry`)
-  try {
-    const unloaded = await manager.setBundleEnabled(name, false)
-    const unloadCode = codeOf(unloaded)
-    if (unloadCode !== undefined) log(`  ! unload reported ${unloadCode}`)
-  } catch (error) {
-    log(`  ! unload failed: ${error instanceof Error ? error.message : String(error)}`)
+  if (enabled === false) {
+    log(`  ! ${name} already reads as disabled, so deselecting it again would change nothing`)
+    const reselect = await toggle(manager, name, true, log)
+    if (reselect !== undefined) {
+      log(`  ! could not re-select ${name} (${reselect}); the removal cannot clear its fiber`)
+    } else {
+      const deselect = await toggle(manager, name, false, log)
+      if (deselect !== undefined) {
+        log(`  ! ${name} may have been left enabled; turn it off again from the Installed tab`)
+      }
+    }
+  } else {
+    const unload = await toggle(manager, name, false, log)
+    if (unload !== undefined) log(`  ! unload reported ${unload}`)
   }
   // Once the plugin has been switched off, a second refusal needs the job log
   // to say so: from the outside, an unload that reported `bundle-in-use` and a
   // removal that refused for the same reason look identical otherwise.
+  let retried: ChangeResult | undefined
+  let retryThrown: unknown
   try {
-    return await manager.removeBundle(name)
+    retried = await manager.removeBundle(name)
   } catch (error) {
-    const retryCode = codeOf(error)
-    if (retryCode === IN_USE) {
-      log(`  ! ${name} is still loaded after unloading; it needs a restart`)
-    }
-    throw error
+    retryThrown = error
   }
+  const retryCode = codeOf(retried) ?? codeOf(retryThrown)
+  if (retryCode !== IN_USE) {
+    if (retryThrown !== undefined) throw retryThrown
+    return retried as ChangeResult
+  }
+  log(`  ! ${name} is still loaded after unloading; it needs a restart`)
+  const detail = restartHint(enabled)
+  if (retryThrown !== undefined) {
+    // Keep the manager's own code on the line the panel reads, and carry the
+    // hint beside it: the caller turns both into the step's outcome.
+    if (retryThrown !== null && typeof retryThrown === 'object') {
+      Object.assign(retryThrown, { code: IN_USE, detail })
+    }
+    throw retryThrown
+  }
+  return { ...(retried as ChangeResult), error: { code: IN_USE, diagnostic: detail } }
 }
 
 /**
@@ -217,12 +316,21 @@ export async function runStep(
     try {
       removed = await removeForReplacement(manager, step.name, log)
     } catch (error) {
+      /**
+       * A refused removal rejects only when the manager could not fold the
+       * failure into a result. The code and the restart hint still belong on
+       * the outcome: without them the panel shows "removal failed: …" and the
+       * operator has nothing to act on.
+       */
+      const code = codeOf(error)
+      const diagnostic = (error as { detail?: unknown } | null | undefined)?.detail
       return {
         ...base,
         ok: false,
         stage: 'remove',
         application: 'failed',
-        message: `removal failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: code ?? `removal failed: ${error instanceof Error ? error.message : String(error)}`,
+        ...(typeof diagnostic === 'string' ? { detail: diagnostic } : {}),
       }
     }
     if (removed?.application === 'failed' || removed?.error !== undefined) {

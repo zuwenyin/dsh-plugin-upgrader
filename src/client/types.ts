@@ -155,4 +155,18 @@ export interface RowActions {
   onSwitch: (row: OverviewRow, version: string) => void
   onApprove: (row: OverviewRow) => void
   onOpenPage?: (name: string) => void
+  /**
+   * Whether this row is the upgrader itself.
+   *
+   * It is answered separately because a plugin cannot replace itself through the
+   * batch job: the first thing that job does for a version change is
+   * `removeBundle`, which unloads the very code that would run the install. The
+   * page's own install flow is owned by its manager rather than by this plugin,
+   * so it is the only route that survives.
+   */
+  self?: boolean
+  /** The package name this row would install, for the self-update route. */
+  onInstallSelf?: (row: OverviewRow, version: string) => void
+  /** Force a fresh registry read for this row after its lookup failed. */
+  onRetryHistory?: () => void
 }

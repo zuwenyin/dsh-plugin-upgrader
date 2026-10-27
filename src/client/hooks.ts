@@ -58,3 +58,46 @@ export function useAlive(): { current: boolean } {
   )
   return alive
 }
+
+/**
+ * Packages whose whole job is restyling the page.
+ *
+ * Replacing one of these unloads the code that injected its stylesheet, so the
+ * page snaps back to the host's default look until the plugin starts again and
+ * re-applies its state. `dsh-dream-skin`, for one, keeps its configuration in
+ * `$DSH_HOME/dream-skin.json` — outside the profile, written atomically — so the
+ * settings survive an upgrade; only the injected CSS and `data-*` attributes on
+ * `<html>` are gone. Reloading the page is what makes the restarted plugin read
+ * that file and inject them again.
+ */
+const APPEARANCE_PATTERN = /(^|[/@-])(skin|theme|dream-skin|wallpaper|appearance)([/@.-]|$)/i
+
+/**
+ * Whether upgrading this package unloads the page's current styling.
+ *
+ * @param name - npm package name.
+ * @returns whether it is an appearance plugin.
+ */
+export function isAppearancePackage(name: string): boolean {
+  return APPEARANCE_PATTERN.test(name)
+}
+
+/**
+ * Whether a settled batch replaced an appearance plugin.
+ *
+ * Only a step that actually changed something counts: a failed or skipped step
+ * never unloaded the stylesheet, so reloading for it would throw away the page
+ * for no reason.
+ *
+ * @param results - the settled job's step outcomes.
+ * @returns whether the page's styling may need re-applying.
+ */
+export function replacedAppearance(
+  results: readonly { name?: unknown; ok?: unknown; changed?: unknown }[] | undefined,
+): boolean {
+  if (!Array.isArray(results)) return false
+  return results.some(
+    (result) =>
+      result.ok === true && result.changed !== false && typeof result.name === 'string' && isAppearancePackage(result.name),
+  )
+}

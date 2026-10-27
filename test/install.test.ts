@@ -138,6 +138,44 @@ test('a bundle-in-use removal unloads the plugin and retries once', async () => 
   assert.ok(log.some((line) => line.includes('still loaded')))
 })
 
+test('a bundle the manager already reads as disabled is re-selected, then dropped', async () => {
+  // Asking for `disabled` again changes nothing, so nothing is disposed and the
+  // retry is refused the same way. Toggling up first is what makes the
+  // deselection a real change the reload can act on.
+  const bundles = [{ name: 'pkg', enabled: false } as BundleInfo]
+  const { manager, calls } = fakeManager({
+    bundles,
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
+    removes: (call) => (call === 0 ? refused('bundle-in-use') : applied({ stage: 'remove' })),
+  })
+  const log: string[] = []
+  const outcome = await runStep(manager, { name: 'pkg', version: '1.2.3' }, (line) => log.push(line))
+
+  assert.deepEqual(calls.enable, [
+    { name: 'pkg', enabled: true },
+    { name: 'pkg', enabled: false },
+  ])
+  assert.equal(outcome.ok, true)
+  assert.ok(log.some((line) => line.includes('already reads as disabled')))
+})
+
+test('a re-select the manager refuses still gets the removal retry', async () => {
+  const bundles = [{ name: 'pkg', enabled: false } as BundleInfo]
+  const { manager, calls } = fakeManager({
+    bundles,
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
+    removes: (call) => (call === 0 ? refused('bundle-in-use') : applied({ stage: 'remove' })),
+    enable: (_name, enabled) => (enabled ? refused('incompatible-version', 'enable') : applied({ stage: 'enable' })),
+  })
+  const log: string[] = []
+  const outcome = await runStep(manager, { name: 'pkg', version: '1.2.3' }, (line) => log.push(line))
+
+  // No point asking for `disabled` after the re-select was refused.
+  assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: true }])
+  assert.ok(log.some((line) => line.includes('could not re-select')))
+  assert.equal(outcome.ok, true)
+})
+
 test('a bundle-in-use thrown rather than returned is retried too', async () => {
   const { manager, calls } = fakeManager({
     installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
@@ -181,6 +219,23 @@ test('a removal still refused after the unload says a restart is needed', async 
   assert.equal(outcome.ok, false)
   assert.equal(outcome.stage, 'remove')
   assert.ok(log.some((line) => line.includes('needs a restart')))
+  // The panel shows `message`; the code has to survive there, and the hint has
+  // to travel beside it or the failure reads as an unexplained code.
+  assert.equal(outcome.message, 'bundle-in-use')
+  assert.match(String(outcome.detail), /restart DSH/)
+})
+
+test('a second refusal reported as a result carries the same hint', async () => {
+  const { manager } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
+    removes: () => refused('bundle-in-use'),
+  })
+  const outcome = await runStep(manager, { name: 'pkg', version: '1.2.3' }, () => {})
+
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.stage, 'remove')
+  assert.equal(outcome.message, 'bundle-in-use')
+  assert.match(String(outcome.detail), /重启 DSH/)
 })
 
 test('a removal refused for another reason stops the step', async () => {

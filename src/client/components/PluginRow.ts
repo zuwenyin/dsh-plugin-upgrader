@@ -29,17 +29,37 @@ export function PluginRow(props: PluginRowProps): unknown {
   const h = getH()
   const React = getReact()
   const { row, t, busy, picked, onToggle, onUpgrade, onSwitch, onApprove, onOpenPage } = props
+  const { self, onInstallSelf } = props
+  const { onRetryHistory } = props
   const [open, setOpen] = React.useState(false)
   const versions = Array.isArray(row.versions) ? row.versions : []
   const hasHistory = versions.length > 0
-  const selectable = row.upgradable === true
+  /**
+   * The upgrader cannot replace itself through the batch job, and must not try:
+   * that job starts a version change with `removeBundle`, which unloads this very
+   * code, so the install that follows would never run. The page's own install
+   * flow belongs to its manager, so the row offers that instead.
+   */
+  const selfUpdate = self === true && row.latest !== undefined && row.latest !== row.version
+  const selectable = row.upgradable === true && self !== true
   const status = row.error !== undefined && row.error !== null ? 'err' : row.upgradable ? 'new' : 'idle'
+  /**
+   * Why this row has no version list, when the host knows.
+   *
+   * The history button used to be the only thing that mentioned a version
+   * problem, and it was simply not rendered — so a registry timeout and a
+   * package with genuinely no published history looked identical: a row with no
+   * history button and no explanation. A lookup that failed is worth a retry, so
+   * it is shown as its own line rather than folded into the description.
+   */
+  const failure = row.versionError !== undefined && row.versionError !== '' ? row.versionError : undefined
+  const retriable = failure !== undefined && /unreachable|timeout|registry \d|github/i.test(failure)
   const versionNote =
-    row.versionError !== undefined
-      ? row.versionError === 'not a profile-managed package'
+    failure === undefined
+      ? undefined
+      : failure === 'not a profile-managed package'
         ? t('sourcePath')
-        : row.versionError
-      : undefined
+        : failure
   const pendingBuilds = Array.isArray(row.pendingBuilds) ? row.pendingBuilds : []
 
   return h(
@@ -84,6 +104,25 @@ export function PluginRow(props: PluginRowProps): unknown {
           { className: 'dsh-pu-desc' },
           row.description !== undefined && row.description !== '' ? row.description : versionNote ?? row.name,
         ),
+        failure !== undefined && retriable
+          ? h(
+              'div',
+              { className: 'dsh-pu-note is-err', title: failure },
+              `${t('historyFailed')}: ${failure}`,
+              typeof onRetryHistory === 'function'
+                ? h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'dsh-pu-btn is-ghost is-tiny',
+                      disabled: busy,
+                      onClick: onRetryHistory,
+                    },
+                    t('retry'),
+                  )
+                : null,
+            )
+          : null,
       ),
       h(
         'div',
@@ -106,7 +145,19 @@ export function PluginRow(props: PluginRowProps): unknown {
               },
               t('upgrade'),
             )
-          : null,
+          : selfUpdate && typeof onInstallSelf === 'function'
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-pu-btn is-primary is-tiny',
+                  disabled: busy,
+                  title: `${t('selfUpdateHint')} →${row.latest}`,
+                  onClick: () => onInstallSelf(row, row.latest as string),
+                },
+                t('selfUpdate'),
+              )
+            : null,
         typeof row.repoUrl === 'string'
           ? h(
               'button',

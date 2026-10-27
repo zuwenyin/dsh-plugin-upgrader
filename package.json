@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-upgrader",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "One-click upgrades, version history and rollback for plugins on the DeepSeek Harness Plugins page",
   "keywords": [
     "dsh",
@@ -58,7 +58,8 @@
     "prepare": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "node --test",
-    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && node scripts/build.mjs && node --test"
+    "check:pack": "node scripts/verify-pack.mjs",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && node scripts/build.mjs && node --test && node scripts/verify-pack.mjs"
   },
   "dsh": {
     "bundle": {

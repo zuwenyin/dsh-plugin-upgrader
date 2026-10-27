@@ -1,22 +1,102 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-27
 
+The first published release since 1.0.2: the `1.0.3` entries below shipped in
+this version, together with everything listed here.
+
+- **Upgrading a theme plugin no longer leaves the page unstyled.** Replacing an
+  appearance plugin (`dsh-dream-skin`, `*-skin-*`, `dsh-client-ui-theme`) unloads
+  the code that injected its stylesheet, so the page snaps back to the host's
+  default look. The settings are NOT lost — `dsh-dream-skin` keeps them in
+  `$DSH_HOME/dream-skin.json`, outside the profile and written atomically, which
+  is why that file survives an upgrade untouched — but the injected CSS and the
+  `data-*` attributes on `<html>` lived only in the page, and the restarted
+  plugin has no way to put them back without being asked. A batch that actually
+  replaced such a plugin now says so and reloads the page once, after the plugin
+  has restarted, so the look comes back from that file. The reload is skipped for
+  failed steps, for steps that changed nothing, and for every ordinary plugin — a
+  failed upgrade must not also throw the page away.
+- **The upgrader's own row explains itself, and can update itself.** Both halves
+  of "这个插件没法管理自己" were real, and they are different problems:
+  - *The row was blank.* Installing as `link:`/`file:` made the overview skip the
+    registry lookup entirely, so the row showed a version, an arrow with nothing
+    after it, and no history. A path install now still reads the published list
+    (the directory keeps its own version, which is what is actually loaded) and
+    says so, instead of looking like a package that was never published. It stays
+    non-upgradable: replacing a `link:` with a registry tarball is a different
+    install, not an upgrade.
+  - *It could not update itself.* A version change through the batch job starts
+    with `removeBundle`, and removing this bundle unloads the very code that
+    would run the install that follows — the batch dies with the plugin that was
+    driving it, leaving the profile without it. The row now offers the page's own
+    installer instead (`plugins.tab` owner prop `install`), which is owned by the
+    plugin manager and therefore survives the unload. The batch and "Select all"
+    skip this row for the same reason, so one click can no longer strand the
+    profile.
+- **The version list no longer silently disappears.** Several plugins drew no
+  history button and no explanation, which looked like "this package has no
+  published versions" — it was a failed registry lookup being swallowed. Three
+  separate causes, all measured against `registry.npmmirror.com`:
+  - **The tab asked for every package at once.** Eleven concurrent connections
+    timed out at the 10 s deadline while the same eleven asked one at a time
+    answered in under 1.2 s. Lookups now go through a four-at-a-time cap.
+  - **The documents are large.** `billion-context` is a 26 MB packument and
+    10 MB even abbreviated, so a healthy request could lose a 10 s race on its
+    own. Lookups now ask for npm's abbreviated form
+    (`application/vnd.npm.install-v1+json`, which keeps `time`, `engines` and
+    `deprecated`), the deadline moved to 20 s, and a transport failure is
+    retried once — a `UND_ERR_CONNECT_TIMEOUT` is socket contention, not a
+    verdict about the package.
+  - **The failure was invisible.** A row whose lookup failed is now drawn with
+    the reason (`版本列表读取失败，点「检查更新」可重试`) instead of looking
+    like a package with no history. A failed lookup is also cached for a shorter
+    window than a successful one, so one bad render does not make the next
+    mount slow too.
+- **A mirror's stale `latest` tag no longer turns an upgrade into a downgrade.**
+  npmmirror serves `@deepseek-ai/dsh-subagent-codex` with `latest: 0.0.1-rc.1`
+  while the profile runs `0.2.1-rc.3`, so the row claimed the installed build
+  was newer than latest and offered a downgrade as an upgrade. A tag that sorts
+  below the installed version is now treated as broken and recovered from the
+  published list, preferring a stable release over a prerelease. A prerelease
+  that merely sorts above a healthy tag still does not steal `latest`.
 - **An upgrade no longer dies on `bundle-in-use`.** Replacing a version means
   remove + install, and `removeBundle` only unloads a bundle it reads as enabled.
   A plugin that is disabled but still holds a live loader fiber therefore went
   straight to the "in use" check and was refused, which made every upgrade of a
-  disabled plugin fail. The removal now unloads the bundle first and retries once;
-  a second refusal is reported as "needs a restart" instead of retrying in a loop.
+  disabled plugin fail. The removal now clears that fiber and retries once.
+- **The unload asks the right question.** 1.0.3's follow-up assumed
+  `setBundleEnabled(name, false)` reloads unconditionally, so it would dispose the
+  fiber. It does not: `selectBundle` returns early when the bundle is already
+  deselected, so the manifest does not change, so `reconcileProfile` has no
+  dropped row to dispose and the fiber survives — the retry then failed for
+  exactly the same reason. The removal now reads `enabled` first and, for a
+  bundle the manager already reads as disabled, re-selects it and deselects it
+  again, which is the only form of the toggle that produces a change a live
+  process can act on.
+- **A refusal the host cannot fix says so.** A second `bundle-in-use` now comes
+  back with the manager's code *and* a bilingual diagnostic ("the loader still
+  holds its plugin row; restart DSH and upgrade again"), and the tab shows the
+  diagnostic instead of the bare code. Retrying in the same process cannot clear
+  it, so the panel has to name the one action that does. The re-select is also
+  undone on the way out, so a failed upgrade never leaves the plugin enabled.
 - **The primary button follows the theme.** Its label colour comes from
   `--dsw-alias-label-primary-inverted` instead of a hard-coded white, so it stays
   readable when the host theme uses a light primary fill.
-- **`test/install.test.ts` covers the replacement path** with a fake manager:
-  the remove + install fallback and its fresh request id, the unload retry (both
-  a returned and a thrown `bundle-in-use`, and an unload that itself throws), the
-  enabled-state restore, and `validateStep`.
+- **Tests**: `test/install.test.ts` covers the replacement path (the remove +
+  install fallback and its fresh request id, the unload retry, the
+  already-disabled re-select including a refused one, the enabled-state restore,
+  and the restart diagnostic on both refusal spellings); `test/registry.test.ts`
+  covers the abbreviated request, the single retry, the shorter failure cache and
+  the 404-is-not-contention rule; `test/overview.test.ts` fails if a page load
+  stops respecting the cap; `test/shape-packument.test.ts` pins the stale-tag
+  rule. `scripts/verify-overview-live.mjs` runs the built host half against the
+  real mirror.
 
-## 1.0.3 — 2026-10-26
+## 1.0.3 — unreleased as its own version
+
+These changes were staged for 1.0.3, which was never published on its own; they
+first shipped in 1.1.0.
 
 - **Upgrades report what pnpm is doing.** The host subscribes to
   `plugin-manager/install-log` and `plugin-manager/install-state`, so pnpm's own
