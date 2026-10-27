@@ -10,6 +10,7 @@
  * @module dsh-plugin-upgrader/client/components/Tab
  */
 import { cancelJob, submitJob, useOverview, watchJob } from '../api.ts'
+import { reloadWhenBootDocumentFresh } from '../boot.ts'
 import { getH, getReact } from '../env.ts'
 import { activeLocaleId, replacedAppearance, useAlive, useLocaleRevision } from '../hooks.ts'
 import { CSS, STYLE_ID } from '../styles.ts'
@@ -117,7 +118,20 @@ export function Tab(props: TabProps): unknown {
          */
         setBanner({ tone: 'info', text: t('reloadForAppearance') })
         window.setTimeout(() => {
-          window.location.reload()
+          /**
+           * The reload is what restores the look, but it is also where a batch
+           * update can turn into a startup failure: the shell serves this page
+           * from an injection table it took from the Host when the Host started,
+           * and the batch URLs in it die as soon as the Host has rotated its
+           * responses twice. Reloading onto such a document loads a batch the
+           * Host answers with 404, and every entry in it fails to boot. Ask
+           * first; when the document is gone, say a restart is needed instead.
+           */
+          void reloadWhenBootDocumentFresh({
+            onBlocked: () => {
+              if (alive.current) setBanner({ tone: 'warn', text: t('reloadBlocked') })
+            },
+          })
         }, APPEARANCE_RELOAD_DELAY_MS)
       }
       return settled

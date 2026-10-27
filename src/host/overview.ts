@@ -14,6 +14,7 @@ import {
   cachedTags,
   fetchPackument,
   shapePackument,
+  versionsMissingFromMirror,
   PACKUMENT_CONCURRENCY,
   type FullPackument,
   type PackumentEntry,
@@ -83,6 +84,14 @@ export interface OverviewRow {
   tags: Record<string, string>
   totalVersions: number
   versionError?: string
+  /**
+   * Releases the upstream registry has that the configured one does not.
+   *
+   * Newest first. Present only when the profile installs from a mirror that is
+   * behind: the tab names them so a lagging mirror is visible instead of looking
+   * like an up-to-date package.
+   */
+  mirrorMissing?: string[]
 }
 
 /** The whole overview response body. */
@@ -217,6 +226,21 @@ export async function buildOverview(
     entry.versionError = shaped.versionError
     entry.upgradable =
       entry.latest !== undefined && compareVersions(entry.latest, bundle.version) > 0
+    /*
+     * Ask the upstream registry what this mirror is missing. The mirror's own
+     * document cannot answer that — it simply omits the version — so without
+     * this the tab looks up to date while npm has a newer release that the
+     * profile cannot install. Naming it is the difference between "nothing to do"
+     * and "there is a newer version, your mirror has not caught up".
+     */
+    const missing = await versionsMissingFromMirror(
+      base,
+      bundle.name,
+      bundle.version,
+      cache,
+      options.force === true,
+    )
+    if (missing.length > 0) entry.mirrorMissing = missing
     return entry
   })
 

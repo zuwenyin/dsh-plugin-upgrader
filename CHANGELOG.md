@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.3.0 — 2026-10-27
+
+- **A batch upgrade no longer greets the next start with a startup-error dialog.**
+  The desktop shell builds the page from an injection table it takes from the Host
+  once, when the Host starts, and serves that same table to every later document.
+  It ends in the boot manifest, whose batch URLs carry a revision hash, and the
+  Host keeps the response for the current revision plus exactly one previous one.
+  An upgrade that replaces two or more plugins rotates that hash twice, so the
+  table the shell still hands out names batches the Host has already dropped —
+  fetching them gets a bare 404, every entry in the batch fails to load, and the
+  shell reports `web boot: N entries did not activate` and shows a fatal dialog
+  over a page that was working a second earlier. Nothing in a plugin can rebuild
+  the table, and a second launch always starts from a fresh one, which is why the
+  dialog looks so arbitrary.
+
+  One thing made it likely: after replacing a theme plugin the tab reloaded the
+  page itself to restore the theme's stylesheet, and that reload could land on a
+  dead table. The reload now asks the Host first — a `HEAD` per boot batch — and
+  when a batch is gone it says a restart is needed instead of walking into the
+  fatal boot. An unclear answer (a refused socket, a 500) is not treated as a
+  verdict, so a flaky moment never turns a working reload into a refusal.
+
+- **A mirror that is behind no longer looks like an up-to-date package.** The tab
+  reads its version list from the registry the profile installs from, and a mirror
+  lags the registry it copies — sometimes by hours. The lag is invisible in the
+  mirror's own document: it simply does not list the newer release, so the row
+  shows an older `latest` and nothing hints that anything is missing. That matters
+  because a version absent from the configured registry cannot be installed at
+  all — pnpm resolves through it and fails with `ERR_PNPM_NO_MATCHING_VERSION`,
+  which takes the whole command down, unrelated packages in the same batch
+  included. Each row now also asks the upstream registry what it is missing above
+  the installed version and names those releases, so "there is a newer version,
+  your mirror has not caught up" reads differently from "nothing to do".
+
 ## 1.2.0 — 2026-10-27
 
 - **A version replacement no longer makes the plugin disappear while it runs.**
@@ -21,6 +55,26 @@
   that is not a plain dependency, a refusal or throw from the attempt itself).
   Every failed attempt restores the entry it dropped first, so a version that can
   only be replaced the slow way is never left worse off for having tried.
+
+- **A batch upgrade no longer greets the next start with a startup-error dialog.**
+  The desktop shell builds the page from an injection table it takes from the Host
+  once, when the Host starts, and serves that same table to every later document.
+  It ends in the boot manifest, whose batch URLs carry a revision hash, and the
+  Host keeps the response for the current revision plus exactly one previous one.
+  An upgrade that replaces two or more plugins rotates that hash twice, so the
+  table the shell still hands out names batches the Host has already dropped —
+  fetching them gets a bare 404, every entry in the batch fails to load, and the
+  shell reports `web boot: N entries did not activate` and shows a fatal dialog
+  over a page that was working a second earlier. Nothing in a plugin can rebuild
+  the table, and a second launch always starts from a fresh one, which is why the
+  dialog looks so arbitrary.
+
+  One thing made it likely: after replacing a theme plugin the tab reloaded the
+  page itself to restore the theme's stylesheet, and that reload could land on a
+  dead table. The reload now asks the Host first — a `HEAD` per boot batch — and
+  when a batch is gone it says a restart is needed instead of walking into the
+  fatal boot. An unclear answer (a refused socket, a 500) is not treated as a
+  verdict, so a flaky moment never turns a working reload into a refusal.
 
 ## 1.1.2 — 2026-10-27
 

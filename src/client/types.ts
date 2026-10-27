@@ -45,6 +45,8 @@ export interface OverviewRow {
   tags: Record<string, string>
   totalVersions: number
   versionError?: string
+  /** Releases the upstream registry has that the configured mirror does not. */
+  mirrorMissing?: string[]
   pendingBuilds?: string[]
 }
 

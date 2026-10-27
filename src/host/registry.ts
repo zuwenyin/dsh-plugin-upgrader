@@ -102,6 +102,17 @@ export interface VersionRow {
   latest: boolean
   /** A GitHub path such as `/releases/tag/v1.2.3`, relative to `repoUrl`. */
   url?: string
+  /**
+   * Published upstream but absent from the registry this profile installs from.
+   *
+   * A mirror lags the registry it copies — sometimes for hours — and a version
+   * that exists on npm but not on the mirror cannot be installed at all: pnpm
+   * resolves every dependency through the configured registry, so asking for it
+   * fails with `ERR_PNPM_NO_MATCHING_VERSION`, and that failure takes the whole
+   * command down, including unrelated packages in the same batch. Offering such
+   * a version as an ordinary upgrade sets the person up for exactly that.
+   */
+  unavailable?: string
 }
 
 /** The packument slice the tab renders. */
@@ -268,6 +279,55 @@ export async function cachedTags(
   const outcome = await fetchTags(repoUrl, Date.now())
   cache.set(repoUrl, outcome)
   return outcome.tags
+}
+
+/** The registry every mirror copies, used to answer "does this version exist at all". */
+export const UPSTREAM_REGISTRY = 'https://registry.npmjs.org'
+
+/**
+ * Find versions that exist upstream but are missing from the configured registry.
+ *
+ * A mirror lags the registry it copies, sometimes for hours. The lag is invisible
+ * from the mirror's own document — it simply does not list the version — so a
+ * profile pointed at a mirror sees an older `latest` and no hint that anything is
+ * missing. That matters because a version which is absent from the configured
+ * registry cannot be installed at all: pnpm resolves every dependency through it,
+ * and `ERR_PNPM_NO_MATCHING_VERSION` fails the whole command, taking unrelated
+ * packages in the same batch down with it.
+ *
+ * Only versions ABOVE the given floor are reported: an old version the mirror
+ * never carried is not something the tab would offer, and listing it would bury
+ * the one line that matters.
+ *
+ * @param base - the registry the profile installs from.
+ * @param packageName - package name.
+ * @param above - report only versions greater than this one.
+ * @param cache - shared cache.
+ * @param force - bypass a fresh cache entry.
+ * @returns the missing versions, newest first.
+ */
+export async function versionsMissingFromMirror(
+  base: string,
+  packageName: string,
+  above: string | undefined,
+  cache: Map<string, PackumentEntry>,
+  force: boolean,
+): Promise<string[]> {
+  // The upstream registry is the configured one: nothing can be missing.
+  if (base.replace(/\/+$/, '') === UPSTREAM_REGISTRY) return []
+  const { data } = await fetchPackument(base, packageName, cache, force)
+  const local = (data as { versions?: Record<string, unknown> } | undefined)?.versions ?? {}
+  const { data: upstream } = await fetchPackument(UPSTREAM_REGISTRY, packageName, cache, force)
+  if (upstream === undefined) return []
+  const remote = (upstream as { versions?: Record<string, unknown> }).versions ?? {}
+  const missing: string[] = []
+  for (const version of Object.keys(remote)) {
+    if (Object.hasOwn(local, version)) continue
+    if (above !== undefined && compareVersions(version, above) <= 0) continue
+    missing.push(version)
+  }
+  missing.sort((left, right) => compareVersions(right, left))
+  return missing
 }
 
 /**

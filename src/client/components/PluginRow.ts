@@ -104,6 +104,24 @@ export function PluginRow(props: PluginRowProps): unknown {
           { className: 'dsh-pu-desc' },
           row.description !== undefined && row.description !== '' ? row.description : versionNote ?? row.name,
         ),
+        /*
+         * A mirror that is behind looks exactly like an up-to-date package: the
+         * newer release is simply absent from the document the tab reads. Name
+         * it, because choosing that version would fail inside pnpm with
+         * ERR_PNPM_NO_MATCHING_VERSION and take the whole batch with it.
+         */
+        Array.isArray(row.mirrorMissing) && row.mirrorMissing.length > 0
+          ? h(
+              'div',
+              {
+                className: 'dsh-pu-note is-err',
+                title: `${t('mirrorBehind')} ${row.mirrorMissing.join(', ')}`,
+              },
+              `${t('mirrorBehind')}: ${row.mirrorMissing.slice(0, 3).join(', ')}${
+                row.mirrorMissing.length > 3 ? ' …' : ''
+              }`,
+            )
+          : null,
         failure !== undefined && retriable
           ? h(
               'div',
