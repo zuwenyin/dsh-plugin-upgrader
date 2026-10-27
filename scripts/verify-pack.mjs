@@ -12,21 +12,62 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const pnpm = resolve(process.env.DSH_PNPM ?? 'D:/dsh-data/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.cjs')
 
-let stdout
-try {
-  stdout = execFileSync(process.execPath, [pnpm, 'pack', '--dry-run', '--json'], {
-    cwd: root,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-} catch (error) {
-  console.error('pnpm pack failed')
-  console.error(String(error.stdout ?? ''))
-  console.error(String(error.stderr ?? ''))
+/**
+ * Run `pnpm pack --dry-run --json` with whatever pnpm this checkout has.
+ *
+ * `pnpm run` puts the running pnpm's own directory on PATH, so the bare name is
+ * right under `pnpm run check` on every platform, and on a machine with a
+ * global or corepack-provided pnpm too. A hard-coded absolute path works on
+ * exactly one machine and fails in CI, which is worse than not having the check
+ * at all.
+ *
+ * `DSH_PNPM` overrides the lookup for the one case PATH cannot answer: a Node
+ * script invoked directly against a bundled runtime, where no `pnpm` shim is
+ * installed. That variable names pnpm's ENTRY SCRIPT (`pnpm.cjs`), not a shim,
+ * so it is run through this same Node binary rather than executed by the OS —
+ * a `.cjs` file is not an executable on any platform.
+ *
+ * The tarball report is the whole point, but the command may print progress
+ * first, so stdout is captured and parsed rather than trusted as JSON.
+ *
+ * @returns the command's stdout.
+ */
+function packReport() {
+  const explicit = process.env.DSH_PNPM
+  const attempts = explicit === undefined
+    ? [['pnpm'], ['pnpm.cmd']]
+    : [[process.execPath, explicit]]
+  const tried = []
+  for (const [file, ...prefix] of attempts) {
+    tried.push(file === process.execPath ? explicit : file)
+    try {
+      return execFileSync(file, [...prefix, 'pack', '--dry-run', '--json'], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } catch (error) {
+      /*
+       * Keep looking only when the command itself is missing. Windows reports a
+       * non-executable `.cmd` shim as `EINVAL` rather than `ENOENT`, so a
+       * missing pnpm must not be mistaken for a broken one: treat both as
+       * "that spelling is not usable here" and let the next candidate answer.
+       * Anything else is a real failure of a pnpm that ran.
+       */
+      if (error?.code === 'ENOENT' || error?.code === 'EINVAL') continue
+      console.error(`pnpm pack failed via "${tried.at(-1)}"`)
+      console.error(String(error.stdout ?? ''))
+      console.error(String(error.stderr ?? ''))
+      process.exit(1)
+    }
+  }
+  console.error(`pnpm was not found. Tried: ${tried.join(', ')}`)
+  console.error('Run this through `pnpm run check`, or set DSH_PNPM to pnpm.cjs.')
   process.exit(1)
 }
+
+const stdout = packReport()
 
 /**
  * Pull the tarball report out of pnpm's stdout.
