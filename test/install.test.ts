@@ -303,6 +303,72 @@ test('an empty approval list is left out instead of sent as empty', async () => 
   assert.equal(calls.install[0]?.options?.approvedBuilds, undefined)
 })
 
+test('a re-install that fails puts the selection back', async () => {
+  /*
+   * The removal already deselected the bundle. A failure after it leaves the
+   * package in `dependencies`, on disk, and NOT selected — the plugin vanishes
+   * from the page with no way back but the same toggle by hand. This is the
+   * exact shape of the reported "整个版本都没了".
+   */
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : new Error('pnpm died')),
+    bundles: [
+      {
+        name: 'pkg',
+        installed: true,
+        enabled: false,
+        version: '1.2.3',
+        availability: 'profile',
+        removable: true,
+      } as BundleInfo,
+    ],
+  })
+  const log: string[] = []
+  const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+  assert.equal(outcome.ok, false)
+  assert.deepEqual(calls.remove, ['pkg'])
+  // The whole point: the bundle is asked back on.
+  assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: true }])
+  assert.match(log.join('\n'), /re-select pkg/)
+})
+
+test('a refused re-install also puts the selection back', async () => {
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : refused('operation-error', 'install')),
+    bundles: [
+      { name: 'pkg', installed: true, enabled: false, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+  const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+  assert.equal(outcome.ok, false)
+  assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: true }])
+})
+
+test('a plain install that fails never touches the selection', async () => {
+  // No removal happened, so nothing was deselected and there is nothing to fix.
+  const { manager, calls } = fakeManager({ installs: () => new Error('network down') })
+  const outcome = await runStep(manager, { name: 'pkg', version: '1.2.3' }, () => {})
+
+  assert.equal(outcome.ok, false)
+  assert.deepEqual(calls.remove, [])
+  assert.deepEqual(calls.enable, [])
+})
+
+test('a package that is no longer installed is not re-selected', async () => {
+  // Selecting something that is not on disk would only fail louder.
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : new Error('gone')),
+    bundles: [
+      { name: 'pkg', installed: false, enabled: false, availability: 'profile', removable: false } as BundleInfo,
+    ],
+  })
+  await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+  assert.deepEqual(calls.enable, [])
+})
+
 test('validateStep accepts a well-formed step', () => {
   assert.equal(validateStep({ name: 'pkg', version: '1.0.0' }), undefined)
   assert.equal(validateStep({ name: 'pkg', version: '1.0.0', action: 'upgrade' }), undefined)

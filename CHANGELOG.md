@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.2 — 2026-10-27
+
+- **A failed replacement no longer leaves the plugin unloaded and invisible.**
+  Replacing a version means `removeBundle` first, and that deselects the bundle
+  so the loader drops its rows. If the install that follows fails — a registry
+  timeout, a killed pnpm, anything — the package was left in `dependencies`, on
+  disk, and NOT selected: the plugin disappeared from the page entirely, and the
+  only way back was the same toggle by hand. A failed re-install now re-selects
+  the bundle before reporting, and says so in the log. The repair is skipped when
+  the package is no longer installed at all, since selecting that would only fail
+  louder.
+
 ## 1.1.1 — 2026-10-27
 
 - **The row no longer offers to switch the running version to itself.** A

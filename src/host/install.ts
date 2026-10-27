@@ -263,6 +263,48 @@ export async function restoreEnabledState(
 }
 
 /**
+ * Put a bundle back in the profile's selection after a failed replacement.
+ *
+ * `removeBundle` has to deselect the bundle to get the loader to drop its rows,
+ * and a step that removes but then fails to install leaves it deselected: the
+ * package stays in `dependencies`, the code stays on disk, and nothing loads it
+ * — the plugin simply disappears from the page with no way back except the same
+ * toggle by hand. This is the recovery for that window.
+ *
+ * Best effort by design: the step has already failed for the reported reason,
+ * and turning a recovery failure into a louder second error would bury it.
+ *
+ * @param manager - the plugin manager.
+ * @param name - the bundle to re-select.
+ * @param log - progress sink.
+ * @returns whether the bundle was re-selected.
+ */
+export async function restoreSelection(
+  manager: PluginManager,
+  name: string,
+  log: LogSink,
+): Promise<boolean> {
+  let selected = false
+  try {
+    const bundles = await manager.listBundles()
+    const entry = Array.isArray(bundles) ? bundles.find((item) => item?.name === name) : undefined
+    // A bundle that is not installed at all cannot be selected: leave it alone.
+    if (entry === undefined || entry.installed !== true) return false
+    selected = entry.enabled === true
+  } catch {
+    return false
+  }
+  if (selected) return false
+  log(`re-select ${name} (a failed replacement must not leave it unloaded)`)
+  const code = await toggle(manager, name, true, log)
+  if (code !== undefined) {
+    log(`  ! could not re-select ${name}: ${code} — enable it from the Installed tab`)
+    return false
+  }
+  return true
+}
+
+/**
  * Run one step: install the exact version, falling back to remove + install,
  * then restore the plugin's previous enabled state.
  *
@@ -351,6 +393,13 @@ export async function runStep(
     try {
       result = await manager.installBundle(spec, { ...options, requestId: retryId })
     } catch (error) {
+      /*
+       * The removal above already deselected the bundle, so a throw here leaves
+       * it installed-but-unloaded: still in `dependencies`, still on disk, no
+       * longer selected, and therefore invisible on the page. Put the selection
+       * back before reporting, or the operator has to repair it by hand.
+       */
+      await restoreSelection(manager, step.name, log)
       return {
         ...base,
         requestId: retryId,
@@ -361,6 +410,12 @@ export async function runStep(
       }
     }
   }
+  /*
+   * A manager that refuses the install instead of throwing reaches here with a
+   * removal already done. Same hazard, same repair; the reported reason stays
+   * whatever the manager said.
+   */
+  if (result?.error !== undefined) await restoreSelection(manager, step.name, log)
   // Only a change that landed has an enabled state to restore: a failed install
   // left nothing behind, and asking to toggle it would report a second, louder
   // error (`operation-error`) for a package that was never added.
