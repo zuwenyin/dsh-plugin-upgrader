@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.2.0 — 2026-10-27
+
+- **A version replacement no longer makes the plugin disappear while it runs.**
+  The manager refuses a spec whose package name is already in the profile's
+  `dependencies`, and the documented answer is remove-then-install. But
+  `removeBundle` deselects the bundle, so the plugin leaves the page for as long
+  as pnpm takes — and a replacement runs pnpm twice, which on a slow mirror is
+  minutes. An upgrade therefore looked like "the plugin vanished", and a failure
+  in between left it that way.
+
+  That guard reads `profile/package.json`, not the disk. Dropping just the
+  dependency entry satisfies it, pnpm `add` overwrites the installed version, and
+  the manager writes the entry back itself — so nothing is ever deselected and
+  the plugin keeps loading throughout. Measured on this profile: **7.9 s instead
+  of 4 m 42 s**, for the same single command that also used to be two.
+
+  The removal path is still there and still used whenever the in-place attempt
+  cannot be made to work (no profile directory, an unreadable manifest, a package
+  that is not a plain dependency, a refusal or throw from the attempt itself).
+  Every failed attempt restores the entry it dropped first, so a version that can
+  only be replaced the slow way is never left worse off for having tried.
+
 ## 1.1.2 — 2026-10-27
 
 - **A failed replacement no longer leaves the plugin unloaded and invisible.**

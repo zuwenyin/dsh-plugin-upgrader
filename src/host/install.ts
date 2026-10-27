@@ -8,6 +8,7 @@
  * @module dsh-plugin-upgrader/lib/install
  */
 import type { BundleInfo, ChangeResult, PluginManager, StepRecord } from './manager.ts'
+import { dropDependency, profileDirFrom, restoreDependency } from './manifest.ts'
 
 /** Progress sink for one job. */
 export type LogSink = (message: string) => void
@@ -305,6 +306,97 @@ export async function restoreSelection(
 }
 
 /**
+ * Replace a version without removing the bundle first.
+ *
+ * The manager refuses a spec whose package name is already a dependency, and
+ * the documented answer is remove-then-install. That answer costs the user a
+ * visible window: `removeBundle` deselects the bundle, so the plugin leaves the
+ * page until pnpm finishes — twice, because a replacement runs two commands.
+ *
+ * The guard reads the profile manifest rather than the disk, so removing just
+ * the dependency entry satisfies it. pnpm `add` then overwrites the installed
+ * version, and because nothing was deselected the bundle keeps loading the whole
+ * time.
+ *
+ * Returns `undefined` whenever this route should not be taken or did not work
+ * out: the caller then falls back to the removal, which is still correct, just
+ * slower. Every exit that leaves the manifest without its entry restores it
+ * first, so a failed attempt cannot make the profile worse than it found it.
+ *
+ * @param manager - the plugin manager.
+ * @param step - the requested change.
+ * @param options - the install options the caller already built.
+ * @param log - progress sink.
+ * @param announce - receives the request id the retry installs under.
+ * @returns the outcome, or `undefined` to fall back to remove + install.
+ */
+async function replaceWithoutRemoval(
+  manager: PluginManager,
+  step: StepRecord,
+  options: Record<string, unknown>,
+  log: LogSink,
+  announce?: RequestIdSink,
+): Promise<StepOutcome | undefined> {
+  const dir = profileDirFrom()
+  if (dir === undefined) return undefined
+  const dropped = dropDependency(dir, step.name)
+  if (dropped.kind === 'unavailable') {
+    log(`  ! cannot rewrite the profile manifest (${dropped.reason}); removing instead`)
+    return undefined
+  }
+  if (dropped.kind === 'absent') {
+    // The guard should not have fired without an entry: leave this to the
+    // removal path rather than guessing what the manager is looking at.
+    return undefined
+  }
+
+  const spec = `${step.name}@${step.version}`
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  log(`install ${spec} over ${dropped.dependency} (no removal needed)`)
+  announce?.(requestId)
+
+  let result: ChangeResult
+  try {
+    result = await manager.installBundle(spec, { ...options, requestId })
+  } catch (error) {
+    restoreDependency(dir, step.name, dropped.dependency)
+    log(`  ! in-place install failed: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  }
+
+  const installed = result?.application === 'applied' || result?.application === 'restart-required'
+  if (result?.error !== undefined || !installed) {
+    /*
+     * pnpm may have rewritten the entry itself before failing. Restoring an
+     * entry that is already there is a no-op, so this is safe either way.
+     */
+    const back = restoreDependency(dir, step.name, dropped.dependency)
+    log(
+      `  ! in-place install refused (${result?.error?.code ?? 'no change'})` +
+        (back ? '; the dependency entry is back' : '; could NOT restore the dependency entry'),
+    )
+    return undefined
+  }
+
+  const enabled = await restoreEnabledState(manager, step, options.enabled as boolean | undefined, log)
+  return {
+    name: step.name,
+    version: result.version ?? step.version,
+    spec,
+    requestId,
+    ...(enabled === undefined ? {} : { enabled }),
+    ok: true,
+    application: result.application,
+    changed: result.changed === true,
+    stage: result.stage,
+    restartReason: result.restartReason,
+    pendingBuilds: result.pendingBuilds,
+    warnings: result.warnings,
+  }
+}
+
+/**
  * Run one step: install the exact version, falling back to remove + install,
  * then restore the plugin's previous enabled state.
  *
@@ -353,6 +445,14 @@ export async function runStep(
     }
   }
   if (result?.error?.code === 'already-installed') {
+    /*
+     * First choice: drop the manifest entry and install again. pnpm overwrites
+     * an existing dependency, the manager's guard only reads the manifest, and
+     * the bundle is never deselected — so the plugin stays on the page for the
+     * whole upgrade instead of vanishing for the length of two pnpm runs.
+     */
+    const direct = await replaceWithoutRemoval(manager, step, options, log, announce)
+    if (direct !== undefined) return direct
     log(`remove ${step.name} (replacing an installed dependency)`)
     let removed: ChangeResult
     try {

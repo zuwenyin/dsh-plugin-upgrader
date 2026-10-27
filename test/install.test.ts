@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { runStep, validateStep } from '../src/host/install.ts'
 import type {
@@ -382,3 +385,102 @@ test('validateStep rejects what it cannot act on', () => {
   assert.equal(validateStep({ version: '1.0.0' }), 'invalid-step')
   assert.equal(validateStep({ name: 'pkg', version: '1.0.0', action: 'delete' }), 'invalid-action')
 })
+
+/**
+ * Run `body` against a throwaway profile, restoring the environment after.
+ *
+ * The in-place route reads `DSH_PROFILE_DIR` and rewrites that manifest, so a
+ * test that forgot to redirect it would edit the profile of the harness that is
+ * running the suite.
+ *
+ * @param manifest - what the profile should declare.
+ * @param body - the test body, given the directory.
+ */
+async function withProfile(
+  manifest: Record<string, unknown>,
+  body: (dir: string) => Promise<void>,
+): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-step-'))
+  const previous = process.env.DSH_PROFILE_DIR
+  writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, undefined, 2)}\n`, 'utf8')
+  process.env.DSH_PROFILE_DIR = dir
+  try {
+    await body(dir)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROFILE_DIR
+    else process.env.DSH_PROFILE_DIR = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test('a replacement installs in place instead of removing first', async () => {
+  /*
+   * The whole point of the in-place route: the bundle is never deselected, so
+   * the plugin never leaves the page. Removing first is what made it vanish.
+   */
+  await withProfile(
+    { name: 'desktop', dependencies: { pkg: '1.0.0' }, dsh: { profile: { bundles: ['pkg'] } } },
+    async (dir) => {
+      const { manager, calls } = fakeManager({
+        installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied({ version: '2.0.0' })),
+      })
+      const log: string[] = []
+      const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+      assert.equal(outcome.ok, true)
+      assert.deepEqual(calls.remove, [], 'nothing was removed')
+      assert.equal(calls.install.length, 2)
+      assert.match(log.join('\n'), /no removal needed/)
+      // The entry is dropped while pnpm runs; the fake manager never writes it
+      // back, so the manifest is left as the drop found it.
+      const after = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+        dependencies: Record<string, string>
+      }
+      assert.equal(Object.hasOwn(after.dependencies, 'pkg'), false)
+    },
+  )
+})
+
+test('an in-place attempt that fails restores the entry and falls back', async () => {
+  await withProfile(
+    { name: 'desktop', dependencies: { pkg: '1.0.0' } },
+    async (dir) => {
+      const { manager, calls } = fakeManager({
+        // Refuse the first, throw on the in-place retry, then succeed on the
+        // remove path.
+        installs: (call) => {
+          if (call === 0) return refused('already-installed', 'install')
+          if (call === 1) return new Error('registry died')
+          return applied({ version: '2.0.0' })
+        },
+      })
+      const log: string[] = []
+      const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+      // It still finishes, by the slower route.
+      assert.equal(outcome.ok, true)
+      assert.deepEqual(calls.remove, ['pkg'], 'fell back to the removal')
+      assert.match(log.join('\n'), /in-place install failed/)
+      // A failed attempt must not leave the profile without its entry.
+      const after = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+        dependencies: Record<string, string>
+      }
+      assert.equal(after.dependencies.pkg, '1.0.0')
+    },
+  )
+})
+
+test('an unreadable profile falls back to the removal instead of guessing', async () => {
+  await withProfile({ name: 'desktop' }, async () => {
+    // No `dependencies` object at all: the drop reports `absent` and the
+    // removal path takes over.
+    const { manager, calls } = fakeManager({
+      installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
+    })
+    const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+    assert.equal(outcome.ok, true)
+    assert.deepEqual(calls.remove, ['pkg'])
+  })
+})
+
