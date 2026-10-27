@@ -177,7 +177,13 @@ export async function buildOverview(
         entry.versionError = 'local path install: the registry has no published copy'
         return entry
       }
-      const shaped = shapePackument(data as FullPackument, undefined, undefined)
+      /*
+       * Pass the installed version through even though this package did not come
+       * from the registry: `shapePackument` uses it to mark which row is the one
+       * actually loaded. Omitting it left every row `current: false`, so the
+       * version the user already has still offered a "back to latest" button.
+       */
+      const shaped = shapePackument(data as FullPackument, bundle.version, undefined)
       entry.latest = shaped.latest
       entry.repoUrl = shaped.repoUrl
       entry.versions = shaped.versions

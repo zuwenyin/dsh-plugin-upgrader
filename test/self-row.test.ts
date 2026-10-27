@@ -96,6 +96,50 @@ test('a path install still shows the published versions, but is not upgradable',
   }
 })
 
+test('a path install marks the version it is running as current', async () => {
+  // The stub publishes 0.9.0 / 1.0.0 / 1.1.0 and the directory is on 1.1.0,
+  // which is also `latest`. Omitting the installed version here left every row
+  // `current: false`, so the row the user is already on still offered a
+  // "back to latest" button that switched it to itself.
+  const restore = stubRegistry()
+  try {
+    const overview = await buildOverview(
+      context([bundle({ name: 'dsh-plugin-upgrader', version: '1.1.0', source: 'link:D:/work/dsh-plugin-upgrader' })]),
+      new Map(),
+      new Map(),
+      {},
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.equal(row.latest, '1.1.0')
+    const current = row.versions.filter((version) => version.current === true)
+    assert.equal(current.length, 1, 'exactly one row is the loaded version')
+    assert.equal(current[0]?.version, '1.1.0')
+  } finally {
+    restore()
+  }
+})
+
+test('a path install on a version the registry does not publish marks nothing current', async () => {
+  // A local build can be ahead of the registry. No published row is the running
+  // one, and saying otherwise would mislabel a version the user is not on.
+  const restore = stubRegistry()
+  try {
+    const overview = await buildOverview(
+      context([bundle({ name: 'dsh-plugin-upgrader', version: '9.9.9', source: 'link:D:/work/dsh-plugin-upgrader' })]),
+      new Map(),
+      new Map(),
+      {},
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.equal(row.version, '9.9.9')
+    assert.equal(row.versions.some((version) => version.current === true), false)
+  } finally {
+    restore()
+  }
+})
+
 test('a path install whose package is not published says so plainly', async () => {
   const original = globalThis.fetch
   globalThis.fetch = (async () => new Response('nope', { status: 404 })) as typeof fetch

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1 — 2026-10-27
+
+- **The row no longer offers to switch the running version to itself.** A
+  path-installed bundle asked the registry for its version list but did not pass
+  its installed version along, so no row was marked as the one loaded. The row
+  the user is already on then drew a live "back to latest" button that pointed at
+  that same version. Two fixes: the installed version is passed through for path
+  installs too, and the button label no longer keys on "this is the latest
+  release" alone — a row that is both current and latest reads "switch", disabled.
+
 ## 1.1.0 — 2026-10-27
 
 The first published release since 1.0.2: the `1.0.3` entries below shipped in

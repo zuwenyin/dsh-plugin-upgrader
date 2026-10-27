@@ -76,7 +76,13 @@ export function VersionLine(props: VersionLineProps): unknown {
         disabled: busy || version.current === true,
         onClick: () => onSwitch(row, version.version),
       },
-      version.version === row.latest ? t('back') : t('switchTo'),
+      /*
+       * "Back to latest" is only meaningful when the row is not already on it.
+       * The label used to key on `version.version === row.latest` alone, so the
+       * version the user is running offered to switch to itself whenever the
+       * host had not marked it current.
+       */
+      version.version === row.latest && version.current !== true ? t('back') : t('switchTo'),
     ),
   )
 }
