@@ -15,11 +15,18 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 ## 功能
 
 - **一键升级** —— 一次把全部可升级插件升到最新版，带进度、逐项结果和失败原因。
+- **升级不卸载** —— 换版本走 in-place 替换，插件不会被卸下来再装回去（详见下文）。
 - **看得见的进度** —— 升级时直接显示 pnpm 的原始输出（含换源重试、lockfile 校验），
   每步都有已用时计时和不确定态进度条，卡住时可以一键取消。
 - **多选升级** —— 勾选任意几个插件，只升级选中的这些。
 - **版本历史 / 回滚** —— 展开任意插件即可看到已发布的全部版本（含发布时间与引擎要求），点一下切到那个版本。
 - **一键跳 GitHub** —— 每行的 `GH` 按钮打开插件仓库主页；点版本号直接进该版本的 GitHub 发布页。
+- **镜像落后会标出来** —— 配置的镜像还没同步、但上游已经发布的版本会单独标一行，
+  而不是假装已经是最新版。
+
+> **要改这个仓库？先读 [AGENTS.md](./AGENTS.md)。** 那里逐条写了「已经实现并且必须继续成立」
+> 的行为、对应代码位置和守护它的测试。上面这些功能里，`GH` 链接和 in-place 升级都曾经
+> 被无意改掉过一次。
 
 ## 界面位置
 
@@ -67,42 +74,87 @@ dsh plugin --profile web add "$PWD"
 
 | 路由 | 作用 |
 | --- | --- |
-| `GET /api/plugin-upgrader/overview` | 已安装插件 + 各插件已发布版本（registry packument，5 分钟缓存，10 秒超时） |
+| `GET /api/plugin-upgrader/overview` | 已安装插件 + 各插件已发布版本（registry packument，5 分钟缓存，20 秒超时，最多 4 个并发） |
 | `POST /api/plugin-upgrader/job` | 提交一批升级 / 切换步骤，立即返回 job id |
 | `GET /api/plugin-upgrader/job?id=…` | 轮询进度、当前阶段、已用时、逐项结果与实时日志 |
-| `POST /api/plugin-upgrader/cancel` | 中断当前步骤（含「先卸载再安装」的第二次安装） |
+| `POST /api/plugin-upgrader/cancel` | 中断当前步骤（任何一次安装，包括退回老路径后的重试） |
 
 所有路由仅限本机回环访问：批量操作会安装软件包，配对设备或跨站页面一律拒绝。
 
-### 为什么「切换版本」是「先卸载再安装」
+### 为什么升级不卸载插件
 
 `pluginManager.installBundle` 对已安装的包名会以 `already-installed` 拒绝，
-所以换版本必须是 remove + install（官方「更新」走的也是同一条路）。
+pnpm 根本不会跑。所以换版本的顺序是：
+
+1. **先直接 `install`**；
+2. 被拒绝时，把 profile `package.json` 里那条依赖**临时**摘掉（先写 journal），再 install ——
+   pnpm 写回新版本，**插件不被卸载**，加载器里的实例不断，启用状态也不用恢复；
+3. 只有第 2 步主动放弃（manifest 读不了 / install 失败 / 被拒绝）时，
+   才退回 remove + install 的老路径。
+
 旧版本号会回传给界面，用于提示这是降级。
+
+> 实现在 1.2.0 就有了，但 1.2.0–1.4.0 在桌面端**从未真正生效**：
+> `profileDirFrom()` 只认 `DSH_PROFILE_DIR` / `DSH_HOME` + `DSH_PROFILE`，而桌面壳启动宿主时
+> 不导出这些变量（它直接把 profile 目录当作子进程的 cwd），于是第 2 步第一行就放弃了，
+> 每次升级都悄悄走 remove + install。1.4.1 加了 cwd 回退之后才真正走这条路。
+> 细节见 [AGENTS.md](./AGENTS.md) 第 2 条。
+
+### 升级中断后 profile 还能自己长回来
+
+第 2 步要在「依赖条目已经删掉、新版还没装上」的窗口里改 profile 的 `package.json`。
+如果进程正好在这段时间被杀掉，插件就从 manifest 里消失了，等于装不回去。
+所以删除之前先写 `package.json.upgrader-journal.json`：下次插件加载时会读它，
+manifest 里确实缺这条就补回去，已经装上就只清掉记录，记录和 manifest 对不上就忽略。
+恢复失败只是打日志，不会拦住标签页加载。
 
 ### enabled 状态保留
 
-卸载会丢掉插件原有的启用 / 禁用状态，因此每一步在安装完成后会按操作前的状态
-重新 `setBundleEnabled`，禁用中的插件升级后仍然是禁用状态。
+卸载会丢掉插件原有的启用 / 禁用状态，因此任何**真的卸载过**插件的步骤都会在装完后
+按操作前的状态重新 `setBundleEnabled`（`src/host/install.ts:251` `restoreEnabledState`），
+禁用中的插件升级后仍然是禁用状态。in-place 那条路不卸载，所以本来就不需要恢复。
 
 ### 为什么升级有时候要好几分钟
 
 不是这个插件慢，是 pnpm 慢。pnpm 11 在 `install` 前会拿锁文件里的每个条目去 registry
 重新核对一次（`Verifying lockfile against supply-chain policies`），国内镜像
 （`registry.npmmirror.com`）对不少包会 `ETIMEDOUT`，于是走 10 秒 → 1 分钟的重试阶梯。
-一次「升级」如果目标是已安装的包，还是 remove + install 两条 pnpm 命令，两段各等一次。
+真正卸载再安装的那种降级路径要跑两条 pnpm 命令，两段各等一次。
 
 旧版本在这里什么都不显示，进度条只在「整步完成」时动一格，所以看起来就是死住了。
 现在宿主端订阅了 `plugin-manager/install-log` 和 `plugin-manager/install-state`，
 把 pnpm 的原始输出、当前阶段、重试次数实时转进 job 日志，界面同时显示已用时和
 不确定态进度条：慢的时候你能看见它在重试，而不是盯着一个不动的 0%。
 
+阶段一共四个：`verifying`（在校验锁文件）→ `installing` → `applying` / `cancelling`。
+锁文件校验那一行会连续几分钟不动，单看和「卡死」一样，所以单独给它一个阶段名。
+
 顺带修掉的两个坑：
 
 - 心跳改成定时器（2 秒），不再按「完成一步」写。单步超过 15 分钟以前会被误判成
   「job 已放弃」，于是一个健康的任务被作废，还能再并进来一批。
-- 「先卸载再安装」的第二次安装以前用 `requestId: undefined`，导致那一段无法取消；
+- 退回老路径时那一次重新安装以前用 `requestId: undefined`，导致那一段无法取消；
   现在每次安装都有自己的 id，取消在任何阶段都有效。
+
+### 写入锁超时说人话
+
+profile 的 `package.json` 由 harness 用同目录的 `package.json.lock` 串行化。
+manager 自己的预算是 120 秒，而 `atomic-write` 给不写预算的调用方的默认值是 2 秒，
+所以偶尔能看到：
+
+```
+atomic-write: timed out waiting for the writer lock at …/package.json.lock
+```
+
+这句话只报一个文件名和一个 pid，用户无法处理。现在失败信息会先读那把锁，再说清楚是
+「另一个操作正在改写，等它结束再试」还是「锁没释放，重启 DSH 会自愈」，
+原文放在方括号里保留，方便搜索或贴进 issue。
+
+### 自己那一行不能自己升级
+
+批量升级的第一步是卸载，而卸载的正是此刻在跑的那段代码。所以「一键升级」永远跳过本插件自己，
+自己那一行落后时走插件页自己的安装流程；页面没有提供安装入口时明确说一句，
+而不是让人点一个必然失败的按钮。
 
 ### 同一时刻只跑一批
 
@@ -120,12 +172,16 @@ dsh plugin --profile web add "$PWD"
 
 ```
 dsh-plugin-upgrader/
+├── AGENTS.md             **改代码前先读**：不可退化的行为 + 守护测试
 ├── src/                  源码（TypeScript）
-│   ├── index.ts          宿主端入口：路由注册、job 调度
+│   ├── index.ts          宿主端入口：路由注册、job 调度、加载时恢复 manifest
 │   ├── host/             宿主端逻辑（Node，无 DOM）
-│   │   ├── overview.ts   组装 overview 载荷
-│   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表
-│   │   ├── install.ts    单步安装 + enabled 状态恢复
+│   │   ├── overview.ts   组装 overview 载荷（含并发上限）
+│   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表、镜像缺口
+│   │   ├── install.ts    单步安装：in-place 替换、remove 回退、enabled 状态恢复
+│   │   ├── manifest.ts   profile package.json 读写、journal、加载时恢复
+│   │   ├── lock.ts       读 profile 写入锁、把锁超时翻成人话
+│   │   ├── progress.ts   从 pnpm 原始输出推断 job 阶段
 │   │   ├── bundle.ts     插件元数据（来源分类、多语言字段、图标）
 │   │   ├── repo.ts       仓库 URL 归一化
 │   │   ├── version.ts    semver 比较、发布页链接
@@ -134,9 +190,10 @@ dsh-plugin-upgrader/
 │   └── client/           浏览器端（拆成模块，由 esbuild 打成一个文件）
 │       ├── index.ts      createPlugin(require)：槽位注册入口
 │       ├── components/   Tab / PluginRow / VersionLine / JobPanel
+│       ├── boot.ts       reload 前确认 boot 文档还有效（见 AGENTS.md 第 4 条）
 │       ├── copy.ts       zh / en 文案
 │       ├── styles.ts     作用域 CSS
-│       ├── hooks.ts      locale 订阅、overview 拉取
+│       ├── hooks.ts      locale 订阅、overview 拉取、外观插件判定
 │       ├── api.ts        fetch 封装、job 轮询
 │       ├── format.ts     版本号 / 日期 / 外部链接
 │       ├── env.ts        window 上的最小类型声明
@@ -168,8 +225,15 @@ pnpm run dev       # 监听 src/，宿主端和浏览器端改完即编译（Ctr
 pnpm run build     # tsc 编译宿主端 + esbuild 打包 client → lib/
 pnpm run typecheck # tsc 检查 src 和 test
 pnpm test          # node:test 单元测试（.ts 直接运行）
-pnpm run check     # 以上全部（typecheck + build + test）
+pnpm run check     # 以上全部（typecheck + build + test + pack 检查）
 ```
+
+**改任何代码前先读 [AGENTS.md](./AGENTS.md)。** 那里列的是「已经实现、不能再退回」的行为，
+每条都附了代码位置和守护它的测试名；`pnpm run check` 全绿只说明没写坏，不说明没改坏
+（很多行为没有对应测试，比如「自己那一行不出现在批量升级里」之外的边界情形）。
+
+新增或修改测试后，问一句：**这个测试真的会红吗？** 把被测的字符串或分支临时改成哨兵值
+再跑一次，确认它失败，然后改回来。不会失败的测试等于没写。
 
 宿主端在 `src/index.ts`（`webServer` 前缀路由 `/api/plugin-upgrader`），
 浏览器端在 `src/client/index.ts`（注册 `plugins.tab` 槽位）。

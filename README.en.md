@@ -18,6 +18,8 @@ English · [中文](./README.md)
 
 - **One-click upgrade** — bump every upgradable plugin to its newest version, with
   progress, per-plugin results and failure reasons.
+- **Upgrades never unload the plugin** — a version replacement happens in place
+  (see below), so the plugin is not torn down and reinstalled.
 - **Progress you can actually see** — the raw pnpm output (registry retries, lockfile
   verification), a live elapsed clock per step, an indeterminate bar while a step
   runs, and a cancel button that works.
@@ -26,6 +28,13 @@ English · [中文](./README.md)
   (with publish date and engine requirement) and switch to it in one click.
 - **GitHub links** — the `GH` button opens the plugin's repository; clicking a
   version number opens that version's GitHub release page.
+- **A lagging mirror is named** — versions published upstream but not yet mirrored
+  are listed separately instead of the row pretending to be current.
+
+> **Changing this repo? Read [AGENTS.md](./AGENTS.md) first.** It lists the behaviour
+> that already works and must keep working, with the code location and the test that
+> guards each one. Two of those features (the `GH` links and the in-place upgrade)
+> have already been lost once by accident.
 
 ## Where it shows up
 
@@ -76,34 +85,58 @@ host half:
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/plugin-upgrader/overview` | installed plugins plus their published versions (registry packument, 5-minute cache, 10-second timeout) |
+| `GET /api/plugin-upgrader/overview` | installed plugins plus their published versions (registry packument, 5-minute cache, 20-second timeout, at most 4 concurrent) |
 | `POST /api/plugin-upgrader/job` | queue a batch of upgrade / switch steps, return a job id immediately |
 | `GET /api/plugin-upgrader/job?id=…` | poll progress, current phase, elapsed time, per-plugin results and the live log |
-| `POST /api/plugin-upgrader/cancel` | abort the step in flight, including the second install of a remove + install |
+| `POST /api/plugin-upgrader/cancel` | abort the step in flight, whichever install is running |
 
 Every route is loopback-only: a batch installs packages, so a paired remote device
 or a cross-site page must never reach it.
 
-### Why switching versions is remove + install
+### Why an upgrade does not unload the plugin
 
 `pluginManager.installBundle` refuses a spec that names an already-installed
-dependency (`already-installed`), so replacing a version is a removal followed by an
-installation — the same path the official Update action takes. The previous version
-is reported back so the UI can warn about a downgrade.
+dependency (`already-installed`), so pnpm never runs. The order is therefore:
+
+1. **Install directly first.**
+2. When that is refused, drop the dependency entry from the profile `package.json`
+   (journal first) and install again — pnpm writes the new version back, the plugin is
+   **not unloaded**, the loader keeps its instance, and no enabled state has to be
+   restored.
+3. Only when step 2 declines (unreadable manifest, failed install, refusal) does the
+   old remove + install path run. The previous version is reported back so the UI can
+   warn about a downgrade.
+
+> The code shipped in 1.2.0, but on the desktop app it **never actually ran** between
+> 1.2.0 and 1.4.0: `profileDirFrom()` only knew `DSH_PROFILE_DIR` / `DSH_HOME` +
+> `DSH_PROFILE`, and the desktop shell exports none of them (it starts the host with
+> the profile directory as its working directory), so step 2 bailed on its first line
+> and every upgrade quietly took the remove + install path. 1.4.1 added the working
+> directory fallback. See item 2 of [AGENTS.md](./AGENTS.md).
+
+### An interrupted upgrade repairs itself
+
+Step 2 edits the profile `package.json` inside the window where the dependency entry is
+gone and the new version is not written yet. A process killed in that window leaves the
+plugin out of the manifest — uninstallable in effect. So a journal
+(`package.json.upgrader-journal.json`) is written before the drop: the next plugin load
+reads it, restores the entry when the manifest really lacks it, merely clears the record
+when the install landed, and ignores a record that no longer describes the manifest.
+A failed repair only logs; it never stops the tab from loading.
 
 ### Preserving the enabled flag
 
-Removing a plugin drops its enabled / disabled state, so each step re-applies
-`setBundleEnabled` with the state it had before the upgrade. A disabled plugin stays
-disabled after being upgraded.
+Removing a plugin drops its enabled / disabled state, so any step that really removes
+one re-applies `setBundleEnabled` with the state it had before the upgrade. A disabled
+plugin stays disabled after being upgraded.
 
 ### Why an upgrade sometimes takes minutes
 
 Not this plugin: pnpm. Before installing, pnpm 11 re-checks every lockfile entry
 against the registry (`Verifying lockfile against supply-chain policies`), and a
 mirror such as `registry.npmmirror.com` answers `ETIMEDOUT` for plenty of packages,
-which starts a 10-second → 1-minute retry ladder. Upgrading an already-installed
-package additionally costs two pnpm runs (remove, then install).
+which starts a 10-second → 1-minute retry ladder. The fallback path that really removes
+and reinstalls costs two pnpm runs.
 
 The old build showed nothing during that time and moved the bar once per completed
 step, so it read as a hang. The host now subscribes to
@@ -112,13 +145,39 @@ own output, the phase and the retry count into the job log, while the panel show
 elapsed clock and an indeterminate bar — a slow install looks like a retrying one
 instead of a frozen 0%.
 
+There are four phases: `verifying` (checking the lockfile) → `installing` →
+`applying` / `cancelling`. The lockfile line can sit unchanged for minutes and reads
+exactly like a hang, which is why it gets a phase name of its own.
+
 Two related bugs fixed with it:
 
 - The heartbeat is a timer (2 s), no longer a write per completed step. A single step
   lasting over 15 minutes used to be declared abandoned, cancelling a healthy job and
   letting a second batch start on the same profile.
-- The second install of a remove + install passed `requestId: undefined`, making that
+- The reinstall on the fallback path passed `requestId: undefined`, making that
   stretch uncancellable. Every install now has its own id, so cancel works throughout.
+
+### A writer-lock timeout in plain words
+
+The harness serializes writers of the profile `package.json` through a sibling
+`package.json.lock`. The manager's own budget is 120 seconds, while `atomic-write`
+defaults to 2 seconds for a caller that states none, so this shows up:
+
+```
+atomic-write: timed out waiting for the writer lock at …/package.json.lock
+```
+
+That sentence names a file and a pid and nothing a reader can act on. The failure now
+reads the lock first and says either "another operation is rewriting it, retry once it
+finishes" or "the lock was never released, restarting DSH clears it", keeping the
+original in brackets so it stays searchable.
+
+### Its own row cannot upgrade itself
+
+The first thing the batch path does is uninstall, and that would unload the very code
+running it. So *Upgrade all* never includes this plugin, and its own row goes through
+the Plugins page's own installer instead; a page that offers no install entry says so
+rather than showing a button that cannot work.
 
 ### One batch at a time
 

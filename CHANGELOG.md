@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`AGENTS.md` records the behaviour that must not regress.** Eleven rules, each
+  with the code location and the test that guards it: the `GH` links (rows *and*
+  historical versions), the in-place version replacement, the manifest journal,
+  the boot-document check before a reload, the `latest`-must-not-be-a-downgrade
+  rule, the mirror-gap report, the install phases, the writer-lock message, the
+  ban on upgrading itself, `bundle-in-use`, and the smaller conventions
+  (loopback-only routes, one batch at a time, the concurrency cap, the enabled
+  flag, never a blank failure reason, zh + en copy only). Both READMEs now link
+  to it, and several statements that had drifted out of date were corrected: the
+  packument timeout is 20 s (not 10), an upgrade no longer removes and reinstalls
+  (the in-place route has run since 1.4.1), and there are four install phases
+  rather than three.
 - **The upgrade log now says what it is doing instead of looking like a
   removal.** A version replacement logs `install <name>@<new>` first, which the
   manager refuses with `already-installed` before pnpm ever runs, and then logs
