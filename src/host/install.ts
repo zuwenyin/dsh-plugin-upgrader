@@ -368,7 +368,7 @@ async function replaceWithoutRemoval(
   const spec = `${step.name}@${step.version}`
   const requestId =
     globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  log(`install ${spec} over ${dropped.dependency} (no removal needed)`)
+  log(`install ${spec} over ${dropped.dependency} (in place: no removal, the bundle stays loaded)`)
   announce?.(requestId)
 
   let result: ChangeResult
@@ -470,6 +470,13 @@ export async function runStep(
   }
   if (result?.error?.code === 'already-installed') {
     /*
+     * The guard refuses a declared dependency before pnpm ever runs, so the
+     * `install` line above did nothing. Without saying that, the log reads as
+     * two separate installs, which is what makes an in-place replacement look
+     * like a removal followed by an install.
+     */
+    log(`  ! ${step.name} is already declared, so a plain install was refused; the bundle stays loaded`)
+    /*
      * First choice: drop the manifest entry and install again. pnpm overwrites
      * an existing dependency, the manager's guard only reads the manifest, and
      * the bundle is never deselected — so the plugin stays on the page for the
@@ -477,7 +484,7 @@ export async function runStep(
      */
     const direct = await replaceWithoutRemoval(manager, step, options, log, announce)
     if (direct !== undefined) return direct
-    log(`remove ${step.name} (replacing an installed dependency)`)
+    log(`remove ${step.name} (in-place replacement declined; replacing an installed dependency)`)
     let removed: ChangeResult
     try {
       removed = await removeForReplacement(manager, step.name, log)

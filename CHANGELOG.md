@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **The upgrade log now says what it is doing instead of looking like a
+  removal.** A version replacement logs `install <name>@<new>` first, which the
+  manager refuses with `already-installed` before pnpm ever runs, and then logs
+  the retry — so a reader sees two installs with nothing in between and reads
+  the gap as a removal. The refusal is now named (`already declared, so a plain
+  install was refused; the bundle stays loaded`), the in-place line spells out
+  that the bundle is not unloaded (`in place: no removal, the bundle stays
+  loaded`), and the fallback that really does remove says so
+  (`in-place replacement declined`). No behaviour changed: the in-place route
+  introduced in 1.2.0 is still the first choice, and a real removal only runs
+  when it declines.
+
 ## 1.4.2 — 2026-10-28
 
 - **GitHub links are back on every row and every historical version.** The

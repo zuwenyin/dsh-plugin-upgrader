@@ -125,6 +125,32 @@ test('an already-installed refusal becomes remove + install under a fresh id', a
   assert.equal(outcome.version, '2.0.0')
 })
 
+test('the log says why the first install did nothing', async () => {
+  /*
+   * A bare `install <spec>` followed by `install <spec> over <old>` reads as a
+   * removal sandwiched between two installs. Naming the guard's refusal is what
+   * makes the in-place route legible in a screenshot.
+   */
+  await withProfile({ name: 'desktop', dependencies: { pkg: '1.0.0' } }, async () => {
+    const { manager } = fakeManager({
+      installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
+    })
+    const log: string[] = []
+    await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+    const refusedLine = log.findIndex((line) => /already declared/.test(line))
+    const inPlaceLine = log.findIndex((line) => /in place: no removal/.test(line))
+    assert.notEqual(refusedLine, -1, 'the refusal is named')
+    assert.notEqual(inPlaceLine, -1, 'the in-place route is named')
+    assert.ok(refusedLine < inPlaceLine, 'the refusal is explained before the retry')
+    assert.equal(
+      log.some((line) => /^remove /.test(line)),
+      false,
+      'nothing claims a removal happened',
+    )
+  })
+})
+
 test('a bundle-in-use removal unloads the plugin and retries once', async () => {
   const { manager, calls } = fakeManager({
     installs: (call) => (call === 0 ? refused('already-installed', 'install') : applied()),
@@ -430,7 +456,7 @@ test('a replacement installs in place instead of removing first', async () => {
       assert.equal(outcome.ok, true)
       assert.deepEqual(calls.remove, [], 'nothing was removed')
       assert.equal(calls.install.length, 2)
-      assert.match(log.join('\n'), /no removal needed/)
+      assert.match(log.join('\n'), /in place: no removal, the bundle stays loaded/)
       // The entry is dropped while pnpm runs; the fake manager never writes it
       // back, so the manifest is left as the drop found it.
       const after = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
