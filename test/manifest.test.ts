@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { dropDependency, profileDirFrom, restoreDependency } from '../src/host/manifest.ts'
+import {
+  JOURNAL_FILE,
+  clearJournal,
+  readJournal,
+  recoverPendingDrop,
+} from '../src/host/manifest.ts'
 
 /**
  * A throwaway profile directory with one dependency.
@@ -86,6 +92,18 @@ test('no temp file is left behind', () => {
   }
 })
 
+test('the journal is a file beside the manifest, not a rewrite of it', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    // Recovery is only possible if the record is durable and separate: a manifest
+    // that merely lacks the entry cannot distinguish "dropped" from "never had it".
+    assert.deepEqual(readdirSync(fixture.dir).sort(), ['package.json', JOURNAL_FILE])
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('an entry that is not there is reported, not invented', () => {
   const fixture = profile()
   try {
@@ -132,5 +150,123 @@ test('a profile without a dependencies object is left alone', () => {
     assert.equal(existsSync(join(dir, 'package.json')), true)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a drop records what it removed, so the loss is undoable', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    // The record exists *after* the entry is gone — that is the whole point:
+    // the manifest alone cannot say what used to be there.
+    assert.deepEqual(readJournal(fixture.dir)?.name, 'dsh-plugin-upgrader')
+    assert.deepEqual(readJournal(fixture.dir)?.spec, '1.1.1')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('restoring clears the record instead of leaving it to be replayed', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    restoreDependency(fixture.dir, 'dsh-plugin-upgrader', '1.1.1')
+    assert.equal(readJournal(fixture.dir), undefined)
+    // A second recovery must not think the entry is missing.
+    assert.deepEqual(recoverPendingDrop(fixture.dir), { kind: 'none' })
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('an interrupted upgrade is repaired on the next load', () => {
+  const fixture = profile()
+  try {
+    // What a killed process leaves behind: the entry gone, the package still on
+    // disk, and nothing else in the profile remembering either fact.
+    const dropped = dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    assert.equal(dropped.kind, 'dropped')
+    assert.equal((fixture.manifest().dependencies as Record<string, string>)['dsh-plugin-upgrader'], undefined)
+
+    const recovery = recoverPendingDrop(fixture.dir)
+    assert.deepEqual(recovery, { kind: 'restored', name: 'dsh-plugin-upgrader', spec: '1.1.1' })
+    assert.equal((fixture.manifest().dependencies as Record<string, string>)['dsh-plugin-upgrader'], '1.1.1')
+    assert.equal(readJournal(fixture.dir), undefined)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('an install that landed is not undone by its own record', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    // pnpm wrote the new version before the process died.
+    const manifest = fixture.manifest()
+    ;(manifest.dependencies as Record<string, string>)['dsh-plugin-upgrader'] = '10.28.1'
+    writeFileSync(join(fixture.dir, 'package.json'), JSON.stringify(manifest, undefined, 2), 'utf8')
+
+    assert.deepEqual(recoverPendingDrop(fixture.dir), { kind: 'settled', name: 'dsh-plugin-upgrader' })
+    assert.equal((fixture.manifest().dependencies as Record<string, string>)['dsh-plugin-upgrader'], '10.28.1')
+    assert.equal(readJournal(fixture.dir), undefined)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a profile with no record is left exactly as it is', () => {
+  const fixture = profile()
+  try {
+    const before = readFileSync(join(fixture.dir, 'package.json'), 'utf8')
+    assert.deepEqual(recoverPendingDrop(fixture.dir), { kind: 'none' })
+    assert.equal(readFileSync(join(fixture.dir, 'package.json'), 'utf8'), before)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a record that no longer describes the manifest is discarded, not applied', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-noapply-'))
+  try {
+    // The manifest was rewritten by something that never knew about the record.
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x' }), 'utf8')
+    writeFileSync(
+      join(dir, JOURNAL_FILE),
+      JSON.stringify({ name: 'dsh-dream-skin', spec: '10.27.1', at: Date.now() }),
+      'utf8',
+    )
+    assert.deepEqual(recoverPendingDrop(dir), { kind: 'none' })
+    // Inventing a `dependencies` object would undo a deliberate edit.
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')), { name: 'x' })
+    assert.equal(existsSync(join(dir, JOURNAL_FILE)), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a corrupt record is ignored rather than trusted', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-corrupt-'))
+  try {
+    writeFileSync(
+      join(dir, 'package.json'),
+      JSON.stringify({ name: 'x', dependencies: { other: '1.0.0' } }),
+      'utf8',
+    )
+    writeFileSync(join(dir, JOURNAL_FILE), '{not json', 'utf8')
+    assert.equal(readJournal(dir), undefined)
+    assert.deepEqual(recoverPendingDrop(dir), { kind: 'none' })
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).dependencies, { other: '1.0.0' })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('clearing a record that is not there is not an error', () => {
+  const fixture = profile()
+  try {
+    assert.doesNotThrow(() => clearJournal(fixture.dir))
+    assert.equal(existsSync(join(fixture.dir, JOURNAL_FILE)), false)
+  } finally {
+    fixture.cleanup()
   }
 })

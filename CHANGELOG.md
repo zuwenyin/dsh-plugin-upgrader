@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.4.0 — 2026-10-28
+
+- **A failed upgrade can no longer leave the profile missing a dependency.** An
+  in-place version replacement works by deleting the package's entry from
+  `profile/package.json` so the manager's `already-installed` guard stops firing,
+  then letting pnpm write the new version back. If the process dies inside that
+  window — a restart, a crash, a killed pnpm — nothing on disk remembered the
+  entry, and the package stayed on disk while being invisible to the manager.
+  That is how a theme update removed the theme: the entry never came back, and
+  the next `pnpm install` moved the orphan directory to `node_modules/.ignored`,
+  after which the plugin could not be upgraded, removed, or even seen again
+  without editing JSON by hand.
+
+  The intent is now written to `package.json.upgrader-journal.json` *before* the
+  entry leaves the manifest, and every load of this plugin repairs a record it
+  finds: an entry still missing is put back at the range it carried, and one that
+  pnpm did write is settled and the record cleared. Recovery is best-effort and
+  never a precondition — a profile that cannot be repaired still loads the tab,
+  which is the only way to fix it.
+
+- **The panel now says what pnpm is doing, instead of showing one frozen label.**
+  A lockfile verification is the longest phase on a cold profile and the least
+  self-explanatory: it prints one line and then nothing for minutes while the tab
+  sat on `准备中`. That phase is now named (`正在校验依赖锁文件`), and the newest
+  line pnpm printed is shown live beside it — a registry timeout and a download
+  both used to read as "installing", and only one of them means keep waiting. The
+  staleness detector counts that line too, so a step that keeps printing no longer
+  reports itself as stale.
+
+- **A writer-lock timeout now explains itself.** The harness serializes writers of
+  `profile/package.json` through a `package.json.lock` sibling, and the shared
+  `atomic-write` helper gives a caller that states no budget two seconds. When an
+  upgrade ran long enough for another writer to hold that lock, the tab reported
+  `atomic-write: timed out waiting for the writer lock at …/package.json.lock` —
+  which names a file and a pid that nobody watching the tab can act on. The
+  message is now preceded by what it means and what to do: another operation is
+  rewriting the manifest (wait it out), or the lock was never released by an
+  upgrade that was killed (restarting DSH clears it). The original sentence is
+  kept in brackets, because it is the string to search for in a log.
+
 ## 1.3.0 — 2026-10-27
 
 - **A batch upgrade no longer greets the next start with a startup-error dialog.**

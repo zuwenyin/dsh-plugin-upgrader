@@ -13,7 +13,16 @@
 import type { InstallLogChunk, InstallState } from './manager.ts'
 
 /** The phase a job reports, including the state before the step starts. */
-export type Phase = InstallState['phase'] | 'waiting'
+export type Phase = InstallState['phase'] | 'waiting' | 'verifying'
+
+/**
+ * pnpm's own words for "nothing is downloaded yet, I am checking a lockfile".
+ *
+ * This is the line that appears first and then sits unchanged for minutes on a
+ * healthy profile, which is why the tab looked frozen: the phase stayed on the
+ * pre-start state until the install itself printed something.
+ */
+const VERIFYING = /verifying lockfile|supply-chain policies/i
 
 /**
  * The phase a log chunk puts a job in.
@@ -32,5 +41,11 @@ export function nextPhase(current: Phase | undefined, chunk: InstallLogChunk): P
   }
   // A whitespace-only chunk is a keep-alive, not evidence of work.
   if (typeof chunk.text !== 'string' || chunk.text.trim() === '') return current ?? 'waiting'
+  /*
+   * Verification is worth naming. It reads as the same frozen phase as the
+   * pre-start state, and it is the phase that lasts longest: a cold profile
+   * spends minutes here while pnpm asks the registry about every lockfile entry.
+   */
+  if (VERIFYING.test(chunk.text)) return 'verifying'
   return 'installing'
 }

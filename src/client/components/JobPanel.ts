@@ -78,9 +78,10 @@ export function JobPanel(props: JobPanelProps): unknown {
   /**
    * A snapshot is stale when the panel has not seen a *different* one for a
    * while. `startedAt`/`stepStartedAt`/`done` stand in for the whole payload:
-   * any real progress moves at least one of them.
+   * any real progress moves at least one of them. The activity line counts too —
+   * a step that keeps printing is alive even when nothing else has moved.
    */
-  const stamp = `${job.id}|${job.stepStartedAt ?? ''}|${job.done ?? 0}|${job.status}`
+  const stamp = `${job.id}|${job.stepStartedAt ?? ''}|${job.done ?? 0}|${job.status}|${job.activity ?? ''}`
   const lastChange = React.useRef({ stamp, at: Date.now() })
   if (lastChange.current.stamp !== stamp) lastChange.current = { stamp, at: Date.now() }
   const stale = inStep && Date.now() - lastChange.current.at > STALE_SNAPSHOT_MS
@@ -93,7 +94,9 @@ export function JobPanel(props: JobPanelProps): unknown {
         ? 'phaseApplying'
         : job.phase === 'cancelling'
           ? 'phaseCancelling'
-          : 'phaseWaiting'
+          : job.phase === 'verifying'
+            ? 'phaseVerifying'
+            : 'phaseWaiting'
   const phaseText =
     job.attempt !== undefined && job.attempt.total > 1
       ? t('registryAttempt', job.attempt.index, job.attempt.total)
@@ -148,6 +151,14 @@ export function JobPanel(props: JobPanelProps): unknown {
         ? h('div', { className: 'dsh-pu-bar-inner is-busy' })
         : h('div', { className: 'dsh-pu-bar-inner', style: { width: `${percent}%` } }),
     ),
+    /*
+     * The live line pnpm last printed. A phase name says which category of wait
+     * this is; this says whether anything is actually happening — a registry
+     * timeout and a download both read as "installing" otherwise.
+     */
+    inStep && job.activity !== undefined
+      ? h('div', { className: 'dsh-pu-activity', title: job.activity }, job.activity)
+      : null,
     inStep ? h('div', { className: 'dsh-pu-hint' }, t('slowHint')) : null,
     showLog && Array.isArray(job.log) ? h('pre', { className: 'dsh-pu-log' }, job.log.join('\n')) : null,
   )

@@ -25,6 +25,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type StepOutcome } from './host/install.ts'
+import { profileDirFrom, recoverPendingDrop } from './host/manifest.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
 import {
   asPluginManager,
@@ -77,6 +78,15 @@ const JOB_LOG_CHARS = 24 * 1024
 /** How many log lines the overview ships for a job the tab adopts. */
 const ADOPTED_LOG_LIMIT = 60
 
+/**
+ * How much of the newest pnpm line the panel shows.
+ *
+ * A single warning line can carry a whole URL plus retry bookkeeping; the tab
+ * renders this inline next to the phase, so it is clipped from the left — the
+ * tail of a pnpm warning says what failed, the head only repeats the registry.
+ */
+const ACTIVITY_CHARS = 120
+
 /** Lifecycle of one batch. */
 type JobStatus = 'queued' | 'running' | 'finished' | 'cancelled'
 
@@ -101,6 +111,15 @@ interface JobRecord {
   stepStartedAt?: number
   /** What that step is doing right now. */
   phase?: Phase
+  /**
+   * The last thing pnpm printed, trimmed.
+   *
+   * A phase alone cannot distinguish "downloading" from "stuck on the eleventh
+   * registry timeout", and those look identical to somebody watching a clock
+   * climb. This is the newest non-blank line, so the panel can show the actual
+   * work instead of only its category.
+   */
+  activity?: string
   /** 1-based number of the registry being tried, and how many there are. */
   attempt?: { index: number; total: number; registry: string | null }
   cacheDirty?: boolean
@@ -194,6 +213,7 @@ export function apply(ctx: HostContext): void {
         job.current = `${step.name}@${step.version}`
         job.stepStartedAt = Date.now()
         job.phase = 'waiting'
+        job.activity = undefined
         job.attempt = undefined
         appendLog(job, `→ ${job.current}`)
         const outcome = await runStep(
@@ -226,6 +246,7 @@ export function apply(ctx: HostContext): void {
     job.current = undefined
     job.stepStartedAt = undefined
     job.phase = undefined
+    job.activity = undefined
     job.attempt = undefined
     job.finishedAt = Date.now()
     job.cacheDirty = true
@@ -294,6 +315,7 @@ export function apply(ctx: HostContext): void {
                   startedAt: live.startedAt,
                   stepStartedAt: live.stepStartedAt,
                   phase: live.phase,
+                  activity: live.activity,
                   attempt: live.attempt,
                   log: live.log.slice(-ADOPTED_LOG_LIMIT),
                 },
@@ -376,6 +398,7 @@ export function apply(ctx: HostContext): void {
           failed: job.failed,
           current: job.current,
           phase: job.phase,
+          activity: job.activity,
           attempt: job.attempt,
           startedAt: job.startedAt,
           stepStartedAt: job.stepStartedAt,
@@ -469,6 +492,17 @@ export function apply(ctx: HostContext): void {
        * install, which is what makes a two-minute step read as a hang.
        */
       job.phase = nextPhase(job.phase, chunk)
+      /*
+       * Keep the newest line as the activity. Everything pnpm says is one more
+       * fact about what it is doing, and the phase is too coarse to answer the
+       * only question a waiting person has: is it working or is it stuck?
+       */
+      const text = typeof chunk.text === 'string' ? chunk.text.trim() : ''
+      if (text !== '') {
+        const line = text.split(/\r?\n/).filter((part) => part.trim() !== '').at(-1) ?? ''
+        const trimmed = line.trim()
+        if (trimmed !== '') job.activity = trimmed.length > ACTIVITY_CHARS ? `…${trimmed.slice(-ACTIVITY_CHARS)}` : trimmed
+      }
     },
     'plugin-upgrader: install output',
   )
@@ -504,4 +538,33 @@ export function apply(ctx: HostContext): void {
     () => ctx.webServer.register({ kind: 'prefix', path: API_PREFIX, handler }),
     'plugin-upgrader: routes',
   )
+
+  /**
+   * Repair a drop whose install never finished.
+   *
+   * An upgrade replaces a version by removing the dependency entry and letting
+   * pnpm write the new one back. If the process dies inside that window — a
+   * restart, a crash, a killed pnpm — the entry is gone and the package is
+   * still on disk, which makes the plugin invisible to the manager. The journal
+   * written before the drop is what makes that state recoverable, so it is read
+   * here, on every load, before anything else can look at the profile.
+   */
+  const dir = profileDirFrom()
+  if (dir !== undefined) {
+    try {
+      const recovery = recoverPendingDrop(dir)
+      if (recovery.kind === 'restored') {
+        console.warn(
+          `[plugin-upgrader] an interrupted upgrade left ${recovery.name} out of the profile manifest; ` +
+            `restored it at ${recovery.spec}. Upgrade it again to finish.`,
+        )
+      }
+    } catch (error) {
+      // Recovery is a repair, never a precondition: a profile that cannot be
+      // repaired must still load the tab, which is the only way to fix it.
+      console.warn(
+        `[plugin-upgrader] could not repair an interrupted upgrade: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
 }

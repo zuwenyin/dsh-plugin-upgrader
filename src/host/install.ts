@@ -7,8 +7,9 @@
  *
  * @module dsh-plugin-upgrader/lib/install
  */
+import { explainLockTimeout } from './lock.ts'
 import type { BundleInfo, ChangeResult, PluginManager, StepRecord } from './manager.ts'
-import { dropDependency, profileDirFrom, restoreDependency } from './manifest.ts'
+import { confirmDependency, dropDependency, profileDirFrom, restoreDependency } from './manifest.ts'
 
 /** Progress sink for one job. */
 export type LogSink = (message: string) => void
@@ -67,6 +68,20 @@ function codeOf(failure: unknown): string | undefined {
   const record = failure as { code?: unknown; error?: { code?: unknown } }
   if (typeof record.code === 'string') return record.code
   return typeof record.error?.code === 'string' ? record.error.code : undefined
+}
+
+/**
+ * A failure message with the writer-lock timeout spelled out.
+ *
+ * The manager composes that sentence inside `atomic-write`, so it cannot be
+ * improved at its source; this is the last place that still knows which profile
+ * the lock belongs to. Every other message comes back untouched.
+ *
+ * @param message - the failure message.
+ * @returns a message to show the operator.
+ */
+function describeFailure(message: string): string {
+  return explainLockTimeout(message, profileDirFrom())
 }
 
 /**
@@ -361,7 +376,7 @@ async function replaceWithoutRemoval(
     result = await manager.installBundle(spec, { ...options, requestId })
   } catch (error) {
     restoreDependency(dir, step.name, dropped.dependency)
-    log(`  ! in-place install failed: ${error instanceof Error ? error.message : String(error)}`)
+    log(`  ! in-place install failed: ${describeFailure(error instanceof Error ? error.message : String(error))}`)
     return undefined
   }
 
@@ -380,6 +395,15 @@ async function replaceWithoutRemoval(
   }
 
   const enabled = await restoreEnabledState(manager, step, options.enabled as boolean | undefined, log)
+  /*
+   * The manifest is what the journal guards, so the journal is only settled by
+   * what the manifest now says — not by the manager's answer. A success that
+   * left no entry is exactly the crash state this record exists to repair, and
+   * dropping it there would make the loss permanent.
+   */
+  if (!confirmDependency(dir, step.name)) {
+    log(`  ! ${step.name} is installed but not recorded in the profile manifest; the next start restores it`)
+  }
   return {
     name: step.name,
     version: result.version ?? step.version,
@@ -441,7 +465,7 @@ export async function runStep(
       ...base,
       ok: false,
       stage: 'install',
-      message: error instanceof Error ? error.message : String(error),
+      message: describeFailure(error instanceof Error ? error.message : String(error)),
     }
   }
   if (result?.error?.code === 'already-installed') {
@@ -471,7 +495,7 @@ export async function runStep(
         ok: false,
         stage: 'remove',
         application: 'failed',
-        message: code ?? `removal failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: code ?? `removal failed: ${describeFailure(error instanceof Error ? error.message : String(error))}`,
         ...(typeof diagnostic === 'string' ? { detail: diagnostic } : {}),
       }
     }
@@ -506,7 +530,9 @@ export async function runStep(
         ok: false,
         stage: 'install',
         application: 'failed',
-        message: `install after removal failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `install after removal failed: ${describeFailure(
+          error instanceof Error ? error.message : String(error),
+        )}`,
       }
     }
   }

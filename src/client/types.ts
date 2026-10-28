@@ -80,7 +80,9 @@ export interface JobSnapshot {
   failed: number
   current?: string
   /** What the current step is doing, when the host knows. */
-  phase?: 'installing' | 'cancelling' | 'applying' | 'waiting'
+  phase?: 'installing' | 'cancelling' | 'applying' | 'waiting' | 'verifying'
+  /** The newest line pnpm printed, so the panel can show actual work. */
+  activity?: string
   /** Which registry is being tried, out of how many. */
   attempt?: { index: number; total: number; registry: string | null }
   startedAt?: number
