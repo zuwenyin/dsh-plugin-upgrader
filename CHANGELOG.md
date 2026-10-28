@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.1 — 2026-10-28
+
+- **The 1.4.0 repairs now actually run inside the desktop app.** Every profile
+  path this plugin resolves went through `DSH_PROFILE_DIR` / `DSH_HOME` +
+  `DSH_PROFILE`, but the desktop shell spawns the plugin host with the profile
+  directory as the working directory and neither variable in the environment —
+  so inside the real app both lookups missed and the host half of 1.4.0 (journal
+  recovery, the writer-lock explanation, the install progress) was silently
+  inert. The resolution now falls back to the working directory when its
+  `package.json` parses and carries the `dsh.profile` key, so a random cwd is
+  never mistaken for a profile.
+
 ## 1.4.0 — 2026-10-28
 
 - **A failed upgrade can no longer leave the profile missing a dependency.** An

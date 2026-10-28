@@ -48,7 +48,52 @@ test('the profile directory comes from the environment the harness exports', () 
     profileDirFrom({ DSH_HOME: 'D:/h', DSH_PROFILE: 'desktop' } as NodeJS.ProcessEnv),
     join('D:/h', 'profiles', 'desktop'),
   )
-  assert.equal(profileDirFrom({} as NodeJS.ProcessEnv), undefined)
+  assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, join('D:/nowhere', 'x')), undefined)
+})
+
+test('a desktop host with no DSH variables falls back to a cwd that is a profile', () => {
+  // The desktop spawns the host with cwd = the profile dir and no DSH_PROFILE*;
+  // the manifest's `dsh.profile` key is what makes the cwd recognisable.
+  const fixture = profile()
+  try {
+    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, fixture.dir), fixture.dir)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a cwd that is not a profile is never mistaken for one', () => {
+  const bare = mkdtempSync(join(tmpdir(), 'dsh-pu-bare-'))
+  const notJson = mkdtempSync(join(tmpdir(), 'dsh-pu-notjson-'))
+  const noProfileKey = mkdtempSync(join(tmpdir(), 'dsh-pu-nokey-'))
+  try {
+    // No manifest at all.
+    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, bare), undefined)
+    // A manifest that is not JSON.
+    writeFileSync(join(notJson, 'package.json'), '{broken', 'utf8')
+    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, notJson), undefined)
+    // A manifest without the dsh.profile key — an ordinary package.
+    writeFileSync(join(noProfileKey, 'package.json'), JSON.stringify({ name: 'x' }), 'utf8')
+    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, noProfileKey), undefined)
+  } finally {
+    for (const dir of [bare, notJson, noProfileKey]) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an explicit environment still wins over the cwd fallback', () => {
+  const fixture = profile()
+  try {
+    assert.equal(
+      profileDirFrom({ DSH_PROFILE_DIR: 'D:/p' } as NodeJS.ProcessEnv, fixture.dir),
+      'D:/p',
+    )
+    assert.equal(
+      profileDirFrom({ DSH_HOME: 'D:/h', DSH_PROFILE: 'desktop' } as NodeJS.ProcessEnv, fixture.dir),
+      join('D:/h', 'profiles', 'desktop'),
+    )
+  } finally {
+    fixture.cleanup()
+  }
 })
 
 test('dropping an entry leaves every other field alone', () => {

@@ -55,10 +55,18 @@ export interface DropJournal {
  * The harness exports this to every process it starts, so the value names the
  * same profile the manager is working on rather than a guess from the disk.
  *
+ * The desktop host is an exception: it spawns the plugin host with
+ * `cwd: this.projectDir` (the profile directory) and no `DSH_PROFILE*`
+ * variables in the child environment, so the env-only lookups both miss. In
+ * that case fall back to the working directory — but only when it really
+ * looks like a profile (its `package.json` parses and carries a `dsh.profile`
+ * object), so a random cwd can never be mistaken for one.
+ *
  * @param env - the process environment.
+ * @param cwd - the working directory to fall back to (overridable in tests).
  * @returns the absolute profile directory, or `undefined` when unknown.
  */
-export function profileDirFrom(env: NodeJS.ProcessEnv = process.env): string | undefined {
+export function profileDirFrom(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string | undefined {
   const explicit = env.DSH_PROFILE_DIR
   if (typeof explicit === 'string' && explicit.trim() !== '') return explicit.trim()
   const home = env.DSH_HOME
@@ -66,7 +74,26 @@ export function profileDirFrom(env: NodeJS.ProcessEnv = process.env): string | u
   if (typeof home === 'string' && home.trim() !== '' && typeof name === 'string' && name.trim() !== '') {
     return join(home.trim(), 'profiles', name.trim())
   }
-  return undefined
+  return profileDirFromCwd(cwd)
+}
+
+/**
+ * Recognise a profile directory by its manifest alone.
+ *
+ * @param cwd - the candidate directory.
+ * @returns the directory when its `package.json` carries a `dsh.profile` object.
+ */
+function profileDirFromCwd(cwd: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(cwd, MANIFEST_FILE), 'utf8'))
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    const dsh = (parsed as Record<string, unknown>)['dsh']
+    if (dsh === null || typeof dsh !== 'object' || Array.isArray(dsh)) return undefined
+    if (typeof (dsh as Record<string, unknown>)['profile'] !== 'object') return undefined
+    return cwd
+  } catch {
+    return undefined
+  }
 }
 
 /** What happened when the entry was dropped. */
