@@ -20,7 +20,7 @@ function stubFetch(handler: (url: string, init: RequestInit | undefined) => Prom
 }
 
 /** A registry answer carrying one version. */
-function packument(body: unknown = { versions: { '1.0.0': {} }, 'dist-tags': { latest: '1.0.0' } }): Response {
+function packument(body: unknown = { versions: { '1.0.0': { repository: { url: 'git+https://github.com/x/x.git', type: 'git' } } }, 'dist-tags': { latest: '1.0.0' } }): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
@@ -36,6 +36,46 @@ test('a packument is asked for in its abbreviated form', async () => {
     assert.equal(result.error, undefined)
     // The full document is what made a 26 MB transfer lose a 10 s deadline.
     assert.equal(accept, 'application/vnd.npm.install-v1+json')
+  } finally {
+    restore()
+  }
+})
+
+test('an abbreviated document without repository fields is re-fetched in the full form', async () => {
+  const accepts: string[] = []
+  const restore = stubFetch(async (_url, init) => {
+    accepts.push(new Headers(init?.headers).get('accept') ?? '')
+    if (accepts.length === 1) {
+      // The abbreviated document omits repository/homepage/bugs entirely.
+      return packument({ versions: { '1.0.0': {} }, 'dist-tags': { latest: '1.0.0' } })
+    }
+    return packument()
+  })
+  try {
+    const cache = new Map<string, PackumentEntry>()
+    const result = await fetchPackument('https://r.example', 'pkg', cache, false)
+    assert.equal(result.error, undefined)
+    assert.deepEqual(accepts, ['application/vnd.npm.install-v1+json', 'application/json'])
+    const data = result.data as { versions?: Record<string, { repository?: { url?: string } }> }
+    assert.match(String(data.versions?.['1.0.0']?.repository?.url), /github\.com/)
+  } finally {
+    restore()
+  }
+})
+
+test('a full-document re-fetch that fails keeps the abbreviated document', async () => {
+  let calls = 0
+  const restore = stubFetch(async () => {
+    calls += 1
+    if (calls === 1) return packument({ versions: { '1.0.0': {} }, 'dist-tags': { latest: '1.0.0' } })
+    throw new Error('fetch failed')
+  })
+  try {
+    const cache = new Map<string, PackumentEntry>()
+    const result = await fetchPackument('https://r.example', 'pkg', cache, false)
+    assert.equal(result.error, undefined, 'the version list still renders')
+    const data = result.data as { repository?: unknown }
+    assert.equal(data.repository, undefined, 'the abbreviated document is what is cached')
   } finally {
     restore()
   }

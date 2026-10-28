@@ -34,6 +34,21 @@ export const PACKUMENT_TIMEOUT_MS = 20 * 1000
  */
 const ABBREVIATED_ACCEPT = 'application/vnd.npm.install-v1+json'
 
+/**
+ * The abbreviated document also drops the fields the GitHub links need.
+ *
+ * `repository`, `homepage` and `bugs` are absent from
+ * `application/vnd.npm.install-v1+json` — measured live on the mirror:
+ * `dshmarket`'s abbreviated document has `repository: undefined` where the full
+ * one carries `git+https://github.com/dsh-market/dsh-market.git`. Every row
+ * therefore lost its `GH` button and every history entry its release link the
+ * moment the abbreviated format was adopted. A document that carries none of
+ * the three fields is re-fetched in the full form once; the full document is
+ * cached in place of the abbreviated one, so the extra request happens at most
+ * once per package per TTL window.
+ */
+const FULL_ACCEPT = 'application/json'
+
 /** Version lists are capped so one huge package cannot flood the tab. */
 export const MAX_VERSIONS = 80
 
@@ -176,7 +191,21 @@ export async function fetchPackument(
         cache.set(key, { at: Date.now(), data: undefined, error })
         return { error }
       }
-      const data: unknown = await response.json()
+      let data: unknown = await response.json()
+      if (dropsRepositoryFields(data) === true) {
+        // The abbreviated format hid the repository fields; ask once more with
+        // the full document, which keeps them. A failure here is not fatal —
+        // the version list still renders, only the links stay missing.
+        try {
+          const full = await fetch(url, {
+            headers: { accept: FULL_ACCEPT },
+            signal: AbortSignal.timeout(PACKUMENT_TIMEOUT_MS),
+          })
+          if (full.ok) data = await full.json()
+        } catch {
+          // Keep the abbreviated document.
+        }
+      }
       cache.set(key, { at: Date.now(), data })
       return { data }
     } catch (error) {
@@ -185,6 +214,44 @@ export async function fetchPackument(
   }
   cache.set(key, { at: Date.now(), data: undefined, error: lastError })
   return { error: lastError }
+}
+
+/**
+ * Does this packument lack every field the GitHub links read?
+ *
+ * The abbreviated document omits `repository`, `homepage` and `bugs` outright —
+ * the keys are simply not present. A full document from a package that genuinely
+ * publishes no repository still carries one of them as `undefined` at worst on
+ * the top level and never as a *missing* key across all three when any version
+ * declares one, so "no key anywhere" is the abbreviated signature. Checking the
+ * top level plus the latest manifest keeps a repository-less package from
+ * triggering the second request forever.
+ *
+ * @param data - the parsed document.
+ * @returns whether a full-document re-fetch could add the fields.
+ */
+function dropsRepositoryFields(data: unknown): boolean {
+  if (data === null || typeof data !== 'object') return false
+  const record = data as Record<string, unknown>
+  if (record.repository !== undefined || record.homepage !== undefined || record.bugs !== undefined) {
+    return false
+  }
+  const versions = record.versions
+  if (versions === null || typeof versions !== 'object') return false
+  const tags = record['dist-tags']
+  const latest = tags !== null && typeof tags === 'object' ? (tags as Record<string, unknown>).latest : undefined
+  const candidates =
+    typeof latest === 'string' && typeof (versions as Record<string, unknown>)[latest] === 'object'
+      ? [(versions as Record<string, unknown>)[latest]]
+      : Object.values(versions as Record<string, unknown>).slice(0, 5)
+  const manifests = candidates.filter(
+    (candidate): candidate is Record<string, unknown> => candidate !== null && typeof candidate === 'object',
+  )
+  if (manifests.length === 0) return false
+  return manifests.every(
+    (manifest) =>
+      manifest.repository === undefined && manifest.homepage === undefined && manifest.bugs === undefined,
+  )
 }
 
 /**

@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.2 — 2026-10-28
+
+- **GitHub links are back on every row and every historical version.** The
+  abbreviated packument form the registry serves to
+  `Accept: application/vnd.npm.install-v1+json` carries no `repository` fields,
+  so rows rendered without a repository link and the history drawer lost the
+  per-version GitHub address. The registry reader now detects an abbreviated
+  document whose versions lack repository metadata and re-fetches that package
+  once in the full `application/json` form, merging the repository fields
+  (homepage, bugs, repository) back into every version entry. Verified live:
+  all 12 installed plugins resolve their `repoUrl`, and historical versions
+  carry their own repository links again.
+
 ## 1.4.1 — 2026-10-28
 
 - **The 1.4.0 repairs now actually run inside the desktop app.** Every profile
