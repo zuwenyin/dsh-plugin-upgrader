@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.3 — 2026-10-28
 
 - **`AGENTS.md` records the behaviour that must not regress.** Eleven rules, each
   with the code location and the test that guards it: the `GH` links (rows *and*
