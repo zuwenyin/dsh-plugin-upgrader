@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "dsh-plugin-upgrader",
   "version": "1.4.2",
   "description": "One-click upgrades, version history and rollback for plugins on the DeepSeek Harness Plugins page",
