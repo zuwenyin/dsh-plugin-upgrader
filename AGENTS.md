@@ -342,6 +342,44 @@ CI 里两者等价，所以漏提交照样红；本地则允许「构建 → `gi
 
 ---
 
+## 14. 一次发版要同时到两个地方：npm 和 GitHub Release
+
+**不可退化。** 2026-10-30 发现过一次真实的、连着九次的遗漏：git tag 有 15 个，GitHub
+Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
+
+原因不是谁忘了，而是**手工步骤没人检查**：`publish.yml` 只做 `pnpm publish`，从来没有任何
+地方建 Release；`RELEASING.md`「需要出 GitHub Release 页面」那一节确实写了
+`gh release create`，但它是可选的、没有校验的，于是连着九次没人跑。
+
+后果不只是"少一页"：
+
+- GitHub 的 **"Latest" 认的是最新的 Release，不是最新的 tag**，所以仓库首页把 `v1.2.0`
+  标成最新，看起来项目已经死在 1.2.0。
+- 本插件行上的 `GH` 按钮、以及每个历史版本号上的链接（`src/host/version.ts` 的
+  `releasePathOf`）都会打开 `releases/tag/v<版本>`——tag 在，所以链接不坏，但点进去是一页
+  空白外壳，比 404 更像 bug。
+
+现在的分工：
+
+- `publish.yml` 有 **两个 job**：`publish`（发 npm）和 `release`（`needs: publish`，用
+  `gh release create --verify-tag` 建页面）。`release` 在 `publish` 之后跑，所以一次失败的
+  发布不会留下一页宣告了 registry 上并不存在的版本。
+- 正文来自 `scripts/release-notes.mjs`：优先 `release-notes/<版本>.md`（或 `v<版本>.md`，
+  给人读的说明），否则退到 `CHANGELOG.md` 的 `## <版本>` 一节（和代码同一个 commit 审过）。
+  两边都没有时**退出 1**，job 变红。
+- **不要把这个 job 改回手工步骤。** 也不要给它加 `continue-on-error`——那等于把"忘了建
+  Release"重新变成一个看不见的失败。
+- `release` job 是幂等的：重跑失败的 workflow 会更新已有页面，不报 `already exists`。
+- `scripts/release-notes.mjs` 的版本匹配是**整词**的，`1.6` 不会匹到 `1.6.0`/`1.6.10`。
+
+**代码：** `.github/workflows/publish.yml` 的 `release` job、`scripts/release-notes.mjs`、
+`release-notes/*.md`、`scripts/release-notes.d.mts`（测试用的类型声明）。
+**守护：** `test/release-notes.test.ts`（8 条：章节到下一个 `##` 为止、版本号整词匹配、
+`v` 前缀等价、没有章节时返回 `undefined` 而不是空串、自写说明优先于 changelog、
+`v<版本>.md` 也能找到、空的自写说明不遮蔽 changelog、两边都没有时不产出正文）。
+
+---
+
 ## 改完必须做的事
 
 ```bash
@@ -352,10 +390,16 @@ pnpm run check     # typecheck(src+test) + build + node --test + pack 检查
 
 ```bash
 # 1) 改 package.json version  2) CHANGELOG 顶部补一节  3) commit
+# 4) 想给人读的话写 release-notes/v<version>.md（可选，优先级高于 CHANGELOG）
 git tag -a v<version> -m "<version>" && git push origin v<version>
 ```
 
+推 tag 之后 CI 会发 npm **并**建 GitHub Release 页面（§14）。
+
 细节见 [RELEASING.md](./RELEASING.md)。
+
+**发布完别急着判断失败：** npm 的 `dist-tags` 和 tarball 会比 workflow 变绿晚几分钟到十几
+分钟（1.6.0 和 1.6.1 都实测过，tarball 404 了两分半）。先轮询再下结论。
 
 **写完测试要问一句：这个测试真的会红吗？** 把被测的字符串 / 分支临时改成哨兵值再跑一次，
 确认它失败，再改回来。不能失败的测试等于没写。

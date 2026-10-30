@@ -91,6 +91,11 @@ pnpm view dsh-plugin-upgrader version dist.tarball --registry https://registry.n
 
 点 **Set up connection** 保存。
 
+`publish.yml` 里现在有两个 job：`publish`（发 npm）和 `release`（建 GitHub Release 页面）。
+trusted publisher 认的是**文件名**，所以这个文件后续再加 job 都不用动这里——但把文件改名、
+或者把发布挪到别的 workflow 里，就必须回来改这一栏，否则会拿到
+`404 — the token exchange failed`。
+
 建议顺手打开 **Require two-factor authentication and disallow tokens**，
 这样以后只能从 CI 发布，token 泄了也发不了包。
 
@@ -119,7 +124,9 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-推送 tag 后 GitHub Actions 会自动跑 `pnpm run check` → `pnpm test` → `pnpm publish`。
+推送 tag 后 GitHub Actions 会自动跑 `pnpm run check` → `pnpm test` → `pnpm publish`，
+**然后再建 GitHub Release 页面**（见下一节）。
+
 （`pnpm publish` 在 trusted publishing 下会自己附加 provenance，不需要再写 `--provenance`。）
 
 看进度：
@@ -129,23 +136,52 @@ gh run list --repo zuwenyin/dsh-plugin-upgrader --limit 3
 gh run watch --repo zuwenyin/dsh-plugin-upgrader
 ```
 
-发布完验证：
+发布完验证（注意 `dist-tags` 和 tarball 会比 workflow 变绿晚几分钟到十几分钟，别急着判断失败）：
 
 ```bash
 pnpm view dsh-plugin-upgrader version --registry https://registry.npmjs.org
+gh release list --repo zuwenyin/dsh-plugin-upgrader --limit 3
 ```
 
 ---
 
-## 需要出 GitHub Release 页面
+## GitHub Release 页面是 CI 建的，不是手工建的
 
-npm 发布和 GitHub Release 是两件事。要生成 Release 页面（用户点 "GH" 链接看到的那页）：
+**这一节曾经写的是「想建的话手动跑 `gh release create`」，然后连着九次没人跑。**
+
+结果是：git tag 有 15 个，GitHub Release 只有 6 个，页面停在 v1.2.0，而 npm 已经发到
+v1.6.1。GitHub 的 "Latest" 认的是**最新的 Release**，不是最新的 tag，于是项目看起来在 1.2.0
+就死了。本插件行上的 `GH` 按钮、以及每个历史版本号上的链接，点进去都是一页空白外壳。
+
+所以这件事现在是自动的：`publish.yml` 里 `publish` 成功之后跑一个 `release` job，
+`gh release create --verify-tag`。手工步骤只要没人检查，就等于没有。
+
+正文来自 `scripts/release-notes.mjs`，顺序是：
+
+1. `release-notes/<版本>.md`（或 `v<版本>.md`）—— 给**人**读的说明，中文散文，和现有那几个
+   Release 页一个风格；
+2. `CHANGELOG.md` 里 `## <版本>` 那一节 —— 和代码同一个 commit 审过，所以永远可以安全发布，
+   只是读起来像 changelog。
+
+两边都没有这个版本时脚本**退出 1**，job 变红。这是故意的：一页没有内容的 Release 比没有
+Release 更难排查。
+
+本机想预览正文：
 
 ```bash
-gh release create v1.0.1 --repo zuwenyin/dsh-plugin-upgrader --title "v1.0.1" --notes-file CHANGELOG.md
+node scripts/release-notes.mjs 1.6.1
 ```
 
-或者用网页：https://github.com/zuwenyin/dsh-plugin-upgrader/releases/new
+给下一个版本写说明：
+
+```bash
+# 先看 changelog 自动生成的效果，再决定要不要单独写一版给人读的
+node scripts/release-notes.mjs 1.6.2
+# 要单独写就放到 release-notes/v1.6.2.md，优先级高于 changelog
+```
+
+`release` job 是**幂等**的：重跑一个失败过的 workflow 会更新已有页面的正文，而不是报
+`already exists`。
 
 ---
 

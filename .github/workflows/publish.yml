@@ -24,7 +24,7 @@ jobs:
       # builds, but running check first keeps a broken build off the registry.
       - name: Check
         run: pnpm run check
-      # lib/ is committed (AGENTS.md §12). Publishing a tag whose build output
+      # lib/ is committed (AGENTS.md §13). Publishing a tag whose build output
       # does not match its sources would put a mismatched package on the
       # registry, so this gate runs before `pnpm publish`.
       - name: Committed build output is up to date
@@ -44,3 +44,54 @@ jobs:
       # is needed either.
       - name: Publish to npm
         run: pnpm publish --access public --no-git-checks
+
+  # npm and GitHub Releases are separate systems. Until this job existed, a tag
+  # push published the package and created no release page at all — which is how
+  # this repository reached 15 tags with 6 releases, the page frozen at v1.2.0
+  # while npm served v1.6.1. GitHub points "Latest" at the newest RELEASE, not the
+  # newest tag, so the project looked abandoned at 1.2.0 even though it was
+  # shipping. A manual `gh release create` was documented and, being unchecked,
+  # got skipped nine times running.
+  #
+  # Runs after `publish` so a red publish never leaves a release page announcing
+  # a version the registry does not have. `--verify-tag` keeps it honest: if the
+  # tag is missing, this fails instead of creating a floating release.
+  release:
+    needs: publish
+    # A release page describes a tag, so a manual dispatch of this workflow on a
+    # branch has nothing to describe: GITHUB_REF_NAME would be `main` and
+    # release-notes.mjs would (correctly) refuse it.
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creating a release writes a tag annotation + release page
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tag is what this job describes; a shallow clone lacks it
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # The body comes from scripts/release-notes.mjs, which prefers
+      # release-notes/<version>.md and falls back to the "## <version>" section of
+      # CHANGELOG.md. Either way the text was reviewed in the commit that is being
+      # tagged, so the page cannot drift from the changelog. The script exits 1
+      # when neither has the version, which fails this job rather than publishing
+      # an empty page — that failure is the point.
+      - name: Compose the release body
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME}" > "$RUNNER_TEMP/notes.md"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Idempotent on purpose: re-running a failed workflow after the release
+          # already exists must update the page, not die on "already exists".
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+              --title "${GITHUB_REF_NAME}" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi
