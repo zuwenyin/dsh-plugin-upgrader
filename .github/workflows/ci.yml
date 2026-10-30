@@ -21,3 +21,10 @@ jobs:
       # unit tests. `pnpm run check` is the same command contributors run locally.
       - name: Check
         run: pnpm run check
+      # lib/ is committed (AGENTS.md §12): the DSH Store reviews a fixed commit
+      # and refuses to run `prepare` to fill in missing runtime files. A source
+      # change without its rebuilt output would ship a mismatched package, so
+      # fail here instead of on the registry. `pnpm run check` runs this too; the
+      # separate step makes the failure name itself in the run summary.
+      - name: Committed build output is up to date
+        run: node scripts/verify-build-committed.mjs

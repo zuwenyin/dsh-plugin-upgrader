@@ -20,10 +20,15 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      # Typecheck, build lib/ from src/ and run the unit tests. `prepare` also
+      # Typecheck, build lib/ from src/ and run the unit tests. `prepack` also
       # builds, but running check first keeps a broken build off the registry.
       - name: Check
         run: pnpm run check
+      # lib/ is committed (AGENTS.md §12). Publishing a tag whose build output
+      # does not match its sources would put a mismatched package on the
+      # registry, so this gate runs before `pnpm publish`.
+      - name: Committed build output is up to date
+        run: node scripts/verify-build-committed.mjs
       # Trusted publishing: GitHub mints a short-lived OIDC token and npm
       # verifies it against the trusted publisher configured for this package,
       # so there is no NPM_TOKEN secret to leak or rotate.

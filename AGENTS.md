@@ -250,6 +250,38 @@ once`、`a bundle the manager already reads as disabled is re-selected, then dro
 
 ---
 
+## 12. `lib/` 是提交进仓库的，不是构建垃圾
+
+`.gitignore` 里**没有** `lib/`。构建产物和 `src/` 一起进 git，原因不是洁癖：
+
+DSH Store 的自动审核看的是一个**固定 commit 的文件树**，它按 manifest 的
+`files` 去找运行时文件（`./lib/index.js`、`./lib/client.js`…），找不到就判
+`runtime artifact is missing from the distributable surface`，而且明确拒绝为了补齐
+而执行 `prepare`（「automation cannot execute `prepare` to fill missing runtime
+files」）。把构建产物提交进去是唯一能通过这条路的方式，顺带让「从 git 装」也不再
+依赖安装期的构建。
+
+由此产生三条硬约束：
+
+- **改完 `src/` 必须 `pnpm run build`，并把 `lib/` 一起提交。** 只提交 `src/`
+  等于发布了一个新旧不匹配的包。CI 里有守卫（见下），漏了会红。
+- **不许手改 `lib/` 里任何文件。** 它们是 tsc / esbuild 的输出，下次构建就没了。
+- **`prepare` 不能加回来。** 安装期执行脚本是审核里的一条硬性否决项
+  （`install lifecycle scripts are present: prepare`）。构建改挂在 `prepack`
+  上，只在 `pnpm pack` / `pnpm publish` 前跑，安装期不跑。
+
+`lib/` 必须是**可复现**的：同一个 `src/` 构建两次，字节完全相同（已用两次构建的
+SHA-256 对比验证过），否则「提交的产物是否最新」无法用 `git diff` 判断。
+
+守卫是 `scripts/verify-build-committed.mjs`，`pnpm run check`、CI 和 publish 都会跑它。
+它比较的是**工作区与索引**（`git diff -- lib/` 加上未跟踪文件），不是与 HEAD 比：
+CI 里两者等价，所以漏提交照样红；本地则允许「构建 → `git add` → 跑 check」这个
+正常顺序，而不是要求先提交再检查那个本该拦住提交的东西。跳过时（没有 `.git`，
+比如从 tarball 里跑）会打印 `not a git work tree` 并放行——「提交和构建是否一致」
+在那种地方没有答案，不算失败。
+
+---
+
 ## 改完必须做的事
 
 ```bash

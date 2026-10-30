@@ -198,11 +198,13 @@ dsh-plugin-upgrader/
 │       ├── format.ts     版本号 / 日期 / 外部链接
 │       ├── env.ts        window 上的最小类型声明
 │       └── types.ts      载荷类型
-├── lib/                  构建产物（git 忽略，`pnpm run build` 生成）
+├── lib/                  构建产物（**已提交**，见 AGENTS.md 第 12 条）
 │   ├── index.js          宿主端入口（tsc 输出）
 │   ├── host/*.js         宿主端模块 + .d.ts
 │   └── client.js         浏览器端单文件 bundle（含 __ModuleLoader__ 包装）
 ├── scripts/build.mjs     构建脚本：tsc 编译宿主端 + esbuild 打包 client（加 --watch 即 dev）
+├── scripts/verify-pack.mjs            发布前核对 tarball 里都有什么
+├── scripts/verify-build-committed.mjs 核对 `lib/` 与源码一致且已提交
 ├── test/                 node:test 单元测试（.ts，Node 24 直接剥离类型）
 ├── locale/               （保留）语言包
 ├── assets/icon.svg       图标
@@ -220,13 +222,18 @@ dsh-plugin-upgrader/
 本项目用 pnpm 管理依赖（`package.json` 里钉了 `packageManager`，CI 也用 pnpm）：
 
 ```bash
-pnpm install       # 安装依赖（会自动跑 prepare → 构建一次）
+pnpm install       # 只装依赖（不会构建，见下）
 pnpm run dev       # 监听 src/，宿主端和浏览器端改完即编译（Ctrl+C 停止）
 pnpm run build     # tsc 编译宿主端 + esbuild 打包 client → lib/
 pnpm run typecheck # tsc 检查 src 和 test
 pnpm test          # node:test 单元测试（.ts 直接运行）
-pnpm run check     # 以上全部（typecheck + build + test + pack 检查）
+pnpm run check     # 以上全部（typecheck + build + test + pack 检查 + 产物是否已提交）
 ```
+
+`lib/` 是**提交进仓库**的，不是构建垃圾：DSH Store 审核固定 commit，不会为了补齐
+运行时文件去执行 `prepare`。所以 `pnpm install` 不再触发构建（安装期脚本会被审核
+直接否决），构建挂在 `prepack` 上；改完 `src/` 必须 `pnpm run build` 并把 `lib/`
+一起提交，`pnpm run check` 会替你核对。详见 [AGENTS.md](./AGENTS.md) 第 12 条。
 
 **改任何代码前先读 [AGENTS.md](./AGENTS.md)。** 那里列的是「已经实现、不能再退回」的行为，
 每条都附了代码位置和守护它的测试名；`pnpm run check` 全绿只说明没写坏，不说明没改坏
@@ -243,9 +250,9 @@ pnpm run check     # 以上全部（typecheck + build + test + pack 检查）
 打包时会直接剥掉类型而不做检查，所以改浏览器端时顺手跑一次 `pnpm run typecheck`。
 
 改完代码后必须重新构建（profile 里的 `link:` 指向本目录，但加载的是 `lib/`，
-不是 `src/`）。`pnpm run dev` 已经替你重建了产物，但**插件本身不会热更新**——
-要让宿主重新加载本插件，无需重启应用：先 `pluginManager.setBundleEnabled(name, false)`
-再 `setBundleEnabled(name, true)`。
+不是 `src/`），并把重建后的 `lib/` 一起提交。`pnpm run dev` 已经替你重建了产物，
+但**插件本身不会热更新**——要让宿主重新加载本插件，无需重启应用：先
+`pluginManager.setBundleEnabled(name, false)` 再 `setBundleEnabled(name, true)`。
 
 ## 发布
 

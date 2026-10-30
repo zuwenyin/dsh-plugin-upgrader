@@ -221,11 +221,13 @@ dsh-plugin-upgrader/
 │       ├── format.ts     versions / dates / external links
 │       ├── env.ts        minimal window typings
 │       └── types.ts      payload types
-├── lib/                  build output (git-ignored, produced by `pnpm run build`)
+├── lib/                  build output (**committed**, see AGENTS.md §12)
 │   ├── index.js          host entry (tsc output)
 │   ├── host/*.js         host modules plus .d.ts
 │   └── client.js         the browser bundle, wrapped in __ModuleLoader__
 ├── scripts/build.mjs     build: tsc for the host, esbuild for the client (--watch = dev)
+├── scripts/verify-pack.mjs            checks what the tarball would ship
+├── scripts/verify-build-committed.mjs checks lib/ matches src/ and is committed
 ├── test/                 node:test unit tests (.ts, stripped natively by Node 24)
 ├── locale/               (reserved) language files
 ├── assets/icon.svg       icon
@@ -244,13 +246,19 @@ Dependencies are managed with pnpm (`packageManager` is pinned in `package.json`
 and CI uses pnpm too):
 
 ```bash
-pnpm install       # installs dependencies (runs prepare → one build)
+pnpm install       # dependencies only — no build (see below)
 pnpm run dev       # watch src/, rebuild the host and the client on save
 pnpm run build     # tsc for the host + esbuild for the client → lib/
 pnpm run typecheck # tsc over src and test
 pnpm test          # node:test unit tests (.ts runs directly)
-pnpm run check     # all of the above (typecheck + build + test)
+pnpm run check     # all of the above, plus the pack check and the build-committed check
 ```
+
+`lib/` is **committed**, not build litter: the DSH Store reviews a fixed commit and
+will not run `prepare` to fill in missing runtime files. So `pnpm install` no longer
+builds (install-time scripts are an automatic rejection in that review) and the build
+hangs off `prepack`; after editing `src/` you must `pnpm run build` and commit `lib/`
+with it, which `pnpm run check` verifies. See [AGENTS.md](./AGENTS.md) §12.
 
 The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
@@ -262,9 +270,10 @@ esbuild only strips types, it does not check them — run `pnpm run typecheck` a
 editing the browser half.
 
 Either way the profile's `link:` points at this directory but loads `lib/`, not
-`src/`, so the build has to run. `pnpm run dev` keeps the output current, but the
-plugin itself does **not** hot-reload — reload it without restarting the app by
-calling `pluginManager.setBundleEnabled(name, false)` and then
+`src/`, so the build has to run and the rebuilt `lib/` has to be committed with it.
+`pnpm run dev` keeps the output current, but the plugin itself does **not**
+hot-reload — reload it without restarting the app by calling
+`pluginManager.setBundleEnabled(name, false)` and then
 `setBundleEnabled(name, true)`.
 
 ## License

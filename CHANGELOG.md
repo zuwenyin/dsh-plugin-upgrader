@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.5.0 — 2026-10-30
+
+- **The package now passes the DSH Store's fixed-commit review on everything a
+  package can control.** The store reviews one commit's file tree, looks for the
+  runtime files named by `files`, and refuses to run `prepare` to fill them in.
+  Three changes follow from that: `lib/` is committed instead of ignored, the
+  build moved from `prepare` to `prepack` (so installing no longer executes
+  anything), and `engines` now declares `dsh` as well as `node`. Re-running the
+  store's own review code against the staged tree drops the reasons from seven to
+  three: the missing artifacts, the `prepare` lifecycle script, the undeclared
+  DSH range and the incomplete scan are all gone.
+- **A guard keeps the committed output honest.** `scripts/verify-build-committed.mjs`
+  compares `lib/` on disk against the index and runs from `pnpm run check`, CI and
+  the publish workflow — so a source change that forgets to rebuild cannot reach
+  the registry. It needs the build to be reproducible to mean anything, which it
+  is: two consecutive builds produce byte-identical output.
+- **The three remaining reasons are the plugin's actual capabilities**, and the
+  store routes those to its review lane rather than rejecting them: it reads and
+  writes the profile manifest (`files`), it fetches packuments (`network`), and
+  it reads the environment to find the profile (`credentials` — `DSH_PROFILE_DIR`
+  and `DSH_PROFILE`, neither of which is a secret; the store's benign-variable
+  allow-list names `DSH_HOME` but not those two).
+
 ## 1.4.3 — 2026-10-28
 
 - **`AGENTS.md` records the behaviour that must not regress.** Eleven rules, each
