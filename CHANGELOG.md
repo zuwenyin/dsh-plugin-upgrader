@@ -1,42 +1,39 @@
 # Changelog
 
-## 1.7.0 — 2026-10-30
+## 1.6.0 — 2026-10-30
 
-- **The source is now a dialog, not a dropdown.** The header control opens a dialog
-  that lists every source this tab can use: the two built-in addresses, the ones
-  `pluginManager` is configured with, and the ones the user added. Each row can be
-  tested against the host (`/-/ping`, falling back to the registry root, 1500 ms — the
-  same endpoint and deadline the harness's own registry probe uses) and switched to
-  with one click, so "is this mirror actually up" is answered in the place the user
-  picks it instead of by a failed install.
+- **The install source is now a setting, not a file edit.** The Versions tab header
+  carries a registry control: the official registry, the mainland mirror, whatever
+  `pluginManager` is configured with, sources the user added, or an address typed in.
+  The choice is written to the profile through the host's settings service, so it
+  survives a restart and is the same in every browser — which is the part the plugin
+  page's per-install registry choice never did (issue #1). The version list is re-read
+  from the chosen source and every install passes it to the manager, so the list and the
+  click cannot disagree about where a package comes from. "Follow pnpm's config" keeps
+  the previous behaviour and is the default.
+- **The control opens a dialog that manages sources, not just picks one.** It lists
+  every source the tab can use — the two built-in addresses, the ones `pluginManager`
+  is configured with, and the ones the user added — and each row can be tested against
+  the host (`/-/ping`, falling back to the registry root, 1500 ms — the same endpoint
+  and deadline the harness's own registry probe uses) and switched to with one click,
+  so "is this mirror actually up" is answered in the place the user picks it instead of
+  by a failed install.
 - **The built-in sources have no edit and no delete, by construction.** They are
   compiled in (`src/client/registry.ts` `WELL_KNOWN_REGISTRIES`) and never written
   into the saved list, so there is no row to edit or remove — not a disabled button
   that a later refactor could re-enable.
-- **Custom sources are a second volatile field**, `customRegistries`, so the list
-  persists through the same settings write as the choice and is the same in every
-  browser. Adding, editing and deleting all send the whole array: one bad element fails
-  the write, so validating the list before saving and storing it verbatim afterwards
-  keeps a click from half-applying. Deleting or editing the source in use also moves
-  the choice, so an install can never be redirected to an address the list no longer
-  holds.
-
-## 1.6.0 — 2026-10-30
-
-- **The install source is now a setting, not a file edit.** The Versions tab header
-  carries a registry picker: the official registry, the mainland mirror, whatever
-  `pluginManager` is configured with, or an address typed in. The choice is written to
-  the profile through the host's settings service, so it survives a restart and is the
-  same in every browser — which is the part the plugin page's per-install registry
-  choice never did (issue #1). The version list is re-read from the chosen source and
-  every install passes it to the manager, so the list and the click cannot disagree
-  about where a package comes from. "Follow pnpm's config" keeps the previous
-  behaviour and is the default.
-- **The setting is a volatile `Config` field**, which is the only shape the host
+- **The settings are volatile `Config` fields**, which is the only shape the host
   exposes a form for: a plain field is invisible to the settings service, and a
-  non-volatile write would restart the plugin. `src/host/config.ts` declares it,
-  `src/client/registry.ts` reads and writes it through `configForms`. A host without
-  that service still renders the tab, with the source shown but not editable.
+  non-volatile write would restart the plugin. `src/host/config.ts` declares `registry`
+  and `customRegistries`, `src/client/registry.ts` reads and writes them through
+  `configForms`. A host without that service still renders the tab, with the source
+  shown but not editable.
+- **Custom sources are the second field**, `customRegistries`, so the list persists
+  through the same settings write as the choice and is the same in every browser.
+  Adding, editing and deleting all send the whole array: one bad element fails the
+  write, so validating the list before saving and storing it verbatim afterwards keeps
+  a click from half-applying. Deleting or editing the source in use also moves the
+  choice, so an install can never be redirected to an address the list no longer holds.
 - **`@deepseek-ai/schemastery` is a real dependency now.** It was already present
   transitively through `dsh-plugin-manager`, but a `Config` schema must be built by the
   same library the loader validates with, so it is declared rather than borrowed.
