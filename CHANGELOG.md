@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.6.0 — 2026-10-30
 
 - **The install source is now a setting, not a file edit.** The Versions tab header
   carries a registry picker: the official registry, the mainland mirror, whatever
