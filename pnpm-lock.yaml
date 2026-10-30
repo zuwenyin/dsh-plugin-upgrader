@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: ~3.18.5
+        version: 3.18.5
     devDependencies:
       '@deepseek-ai/dsh-client-locale':
         specifier: ^0.2.1-rc.2

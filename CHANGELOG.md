@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **The install source is now a setting, not a file edit.** The Versions tab header
+  carries a registry picker: the official registry, the mainland mirror, whatever
+  `pluginManager` is configured with, or an address typed in. The choice is written to
+  the profile through the host's settings service, so it survives a restart and is the
+  same in every browser — which is the part the plugin page's per-install registry
+  choice never did (issue #1). The version list is re-read from the chosen source and
+  every install passes it to the manager, so the list and the click cannot disagree
+  about where a package comes from. "Follow pnpm's config" keeps the previous
+  behaviour and is the default.
+- **The setting is a volatile `Config` field**, which is the only shape the host
+  exposes a form for: a plain field is invisible to the settings service, and a
+  non-volatile write would restart the plugin. `src/host/config.ts` declares it,
+  `src/client/registry.ts` reads and writes it through `configForms`. A host without
+  that service still renders the tab, with the source shown but not editable.
+- **`@deepseek-ai/schemastery` is a real dependency now.** It was already present
+  transitively through `dsh-plugin-manager`, but a `Config` schema must be built by the
+  same library the loader validates with, so it is declared rather than borrowed.
+
 ## 1.5.0 — 2026-10-30
 
 - **The package now passes the DSH Store's fixed-commit review on everything a

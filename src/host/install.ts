@@ -431,6 +431,7 @@ async function replaceWithoutRemoval(
  * @param step - the requested change.
  * @param log - progress sink.
  * @param announce - receives the request id the step installs under.
+ * @param registry - the registry chosen in this plugin's config, if any.
  * @returns the outcome record.
  */
 export async function runStep(
@@ -438,6 +439,7 @@ export async function runStep(
   step: StepRecord,
   log: LogSink,
   announce?: RequestIdSink,
+  registry?: string,
 ): Promise<StepOutcome> {
   const spec = `${step.name}@${step.version}`
   const requestId =
@@ -455,6 +457,13 @@ export async function runStep(
     saveExact: true,
     ...(restoreEnabled === undefined ? {} : { enabled: restoreEnabled }),
     ...buildApproval,
+    /*
+     * Only a registry the user actually chose is sent. Leaving the option out
+     * keeps the manager's own `registry` config in charge, which is the
+     * behaviour of every version before this one; sending `null` here would
+     * override that config with pnpm's registry instead.
+     */
+    ...(typeof registry === 'string' && registry.trim() !== '' ? { registry: registry.trim() } : {}),
   }
 
   let result: ChangeResult

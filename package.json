@@ -85,5 +85,8 @@
     "@types/react": "^19.3.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
   }
 }

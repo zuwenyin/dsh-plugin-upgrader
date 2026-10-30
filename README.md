@@ -23,6 +23,8 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 - **一键跳 GitHub** —— 每行的 `GH` 按钮打开插件仓库主页；点版本号直接进该版本的 GitHub 发布页。
 - **镜像落后会标出来** —— 配置的镜像还没同步、但上游已经发布的版本会单独标一行，
   而不是假装已经是最新版。
+- **自己选安装源** —— 版本页顶部就能切换 npm 源（官方源 / 大陆镜像 / 自己填的私有源），
+  选完立刻按新源重读版本列表，升级也走这个源；选择写进 profile，重启和换浏览器都还在。
 
 > **要改这个仓库？先读 [AGENTS.md](./AGENTS.md)。** 那里逐条写了「已经实现并且必须继续成立」
 > 的行为、对应代码位置和守护它的测试。上面这些功能里，`GH` 链接和 in-place 升级都曾经
@@ -33,6 +35,8 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 插件页顶部标签栏多出一个「版本」标签，与「已安装」「发现」并列：
 
 - 顶部统计：可升级数量 / 已安装数量 / 每个插件的版本数
+- 顶部「注册表」按钮切换安装源：官方源、大陆镜像、`pluginManager` 配的源，或自己填一个地址；
+  选「跟随 pnpm 配置」则用 pnpm 自己的源（通常是 `~/.npmrc` 里的那个）
 - 「一键升级」升全部可升级插件；下面一条选择栏负责「升级选中」
 - 「检查更新」强制刷新 registry 缓存（默认缓存 5 分钟）
 - 搜索框按包名过滤
@@ -176,6 +180,7 @@ dsh-plugin-upgrader/
 ├── src/                  源码（TypeScript）
 │   ├── index.ts          宿主端入口：路由注册、job 调度、加载时恢复 manifest
 │   ├── host/             宿主端逻辑（Node，无 DOM）
+│   │   ├── config.ts     Config schema（volatile 的 registry）、读取用户选择
 │   │   ├── overview.ts   组装 overview 载荷（含并发上限）
 │   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表、镜像缺口
 │   │   ├── install.ts    单步安装：in-place 替换、remove 回退、enabled 状态恢复
@@ -189,7 +194,8 @@ dsh-plugin-upgrader/
 │   │   └── manager.ts    宿主 pluginManager 服务的最小类型契约
 │   └── client/           浏览器端（拆成模块，由 esbuild 打成一个文件）
 │       ├── index.ts      createPlugin(require)：槽位注册入口
-│       ├── components/   Tab / PluginRow / VersionLine / JobPanel
+│       ├── components/   Tab / PluginRow / VersionLine / JobPanel / RegistryPicker
+│       ├── registry.ts   读写 registry 设置、可选源列表
 │       ├── boot.ts       reload 前确认 boot 文档还有效（见 AGENTS.md 第 4 条）
 │       ├── copy.ts       zh / en 文案
 │       ├── styles.ts     作用域 CSS
@@ -198,7 +204,7 @@ dsh-plugin-upgrader/
 │       ├── format.ts     版本号 / 日期 / 外部链接
 │       ├── env.ts        window 上的最小类型声明
 │       └── types.ts      载荷类型
-├── lib/                  构建产物（**已提交**，见 AGENTS.md 第 12 条）
+├── lib/                  构建产物（**已提交**，见 AGENTS.md 第 13 条）
 │   ├── index.js          宿主端入口（tsc 输出）
 │   ├── host/*.js         宿主端模块 + .d.ts
 │   └── client.js         浏览器端单文件 bundle（含 __ModuleLoader__ 包装）
@@ -233,7 +239,7 @@ pnpm run check     # 以上全部（typecheck + build + test + pack 检查 + 产
 `lib/` 是**提交进仓库**的，不是构建垃圾：DSH Store 审核固定 commit，不会为了补齐
 运行时文件去执行 `prepare`。所以 `pnpm install` 不再触发构建（安装期脚本会被审核
 直接否决），构建挂在 `prepack` 上；改完 `src/` 必须 `pnpm run build` 并把 `lib/`
-一起提交，`pnpm run check` 会替你核对。详见 [AGENTS.md](./AGENTS.md) 第 12 条。
+一起提交，`pnpm run check` 会替你核对。详见 [AGENTS.md](./AGENTS.md) 第 13 条。
 
 **改任何代码前先读 [AGENTS.md](./AGENTS.md)。** 那里列的是「已经实现、不能再退回」的行为，
 每条都附了代码位置和守护它的测试名；`pnpm run check` 全绿只说明没写坏，不说明没改坏

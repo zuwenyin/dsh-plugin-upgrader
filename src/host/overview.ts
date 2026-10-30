@@ -97,7 +97,16 @@ export interface OverviewRow {
 /** The whole overview response body. */
 export interface Overview {
   generatedAt: number
+  /** The registry the versions were read from, without a trailing slash. */
   registry: string
+  /**
+   * The registry saved in this plugin's own config, verbatim.
+   *
+   * Empty means "follow pnpm", which is not the same as `registry` above: that
+   * one has already been resolved to a concrete address, so it cannot tell the
+   * picker whether the user made a choice or is riding on pnpm's config.
+   */
+  savedRegistry: string
   registries: RegistriesReport
   runtimeVersion: string | null
   bundles: OverviewRow[]
@@ -107,6 +116,8 @@ export interface Overview {
 export interface OverviewOptions {
   force?: boolean
   locale?: 'zh' | 'en'
+  /** The registry saved in this plugin's config; empty follows pnpm. */
+  registry?: string
 }
 
 /**
@@ -132,7 +143,8 @@ export async function buildOverview(
     throw Object.assign(new Error('plugin manager unavailable'), { status: 503 })
   }
   const [bundles, registries] = await Promise.all([manager.listBundles(), manager.registries()])
-  const base = registryBase(registries)
+  const savedRegistry = typeof options.registry === 'string' ? options.registry.trim() : ''
+  const base = registryBase(registries, savedRegistry)
   const locale = options.locale === 'zh' ? 'zh' : 'en'
 
   const installed = bundles.filter((bundle) => bundle.installed === true)
@@ -254,6 +266,7 @@ export async function buildOverview(
   return {
     generatedAt: Date.now(),
     registry: base,
+    savedRegistry,
     registries,
     runtimeVersion: typeof runtime === 'string' ? runtime : null,
     bundles: rows,

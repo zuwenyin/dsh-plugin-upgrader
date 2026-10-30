@@ -77,9 +77,10 @@ export declare function restoreSelection(manager: PluginManager, name: string, l
  * @param step - the requested change.
  * @param log - progress sink.
  * @param announce - receives the request id the step installs under.
+ * @param registry - the registry chosen in this plugin's config, if any.
  * @returns the outcome record.
  */
-export declare function runStep(manager: PluginManager, step: StepRecord, log: LogSink, announce?: RequestIdSink): Promise<StepOutcome>;
+export declare function runStep(manager: PluginManager, step: StepRecord, log: LogSink, announce?: RequestIdSink, registry?: string): Promise<StepOutcome>;
 /**
  * Whether a step names something this plugin is willing to install.
  *

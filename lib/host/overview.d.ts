@@ -37,7 +37,16 @@ export interface OverviewRow {
 /** The whole overview response body. */
 export interface Overview {
     generatedAt: number;
+    /** The registry the versions were read from, without a trailing slash. */
     registry: string;
+    /**
+     * The registry saved in this plugin's own config, verbatim.
+     *
+     * Empty means "follow pnpm", which is not the same as `registry` above: that
+     * one has already been resolved to a concrete address, so it cannot tell the
+     * picker whether the user made a choice or is riding on pnpm's config.
+     */
+    savedRegistry: string;
     registries: RegistriesReport;
     runtimeVersion: string | null;
     bundles: OverviewRow[];
@@ -46,6 +55,8 @@ export interface Overview {
 export interface OverviewOptions {
     force?: boolean;
     locale?: 'zh' | 'en';
+    /** The registry saved in this plugin's config; empty follows pnpm. */
+    registry?: string;
 }
 /**
  * Build the overview the tab renders.

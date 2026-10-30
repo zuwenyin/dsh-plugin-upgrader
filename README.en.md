@@ -30,6 +30,10 @@ English · [中文](./README.md)
   version number opens that version's GitHub release page.
 - **A lagging mirror is named** — versions published upstream but not yet mirrored
   are listed separately instead of the row pretending to be current.
+- **Pick your own source** — switch the npm registry from the top of the Versions tab
+  (official, the mainland mirror, or an address you type). The version list is re-read
+  from the new source immediately and installs follow it; the choice is written to the
+  profile, so it survives a restart and is the same in every browser.
 
 > **Changing this repo? Read [AGENTS.md](./AGENTS.md) first.** It lists the behaviour
 > that already works and must keep working, with the code location and the test that
@@ -41,6 +45,9 @@ English · [中文](./README.md)
 A **Versions** tab appears next to *Installed* and *Discover* on the Plugins page:
 
 - Header counts: upgradable / installed / version count
+- The header **Registry** control switches the install source: the official registry,
+  the mainland mirror, whatever `pluginManager` is configured with, or an address you
+  type; *Follow pnpm's config* keeps pnpm's own registry (usually the one in `.npmrc`)
 - **Upgrade all** handles every upgradable plugin; the selection bar below handles
   **Upgrade selected**
 - **Check for updates** bypasses the 5-minute registry cache
@@ -221,7 +228,7 @@ dsh-plugin-upgrader/
 │       ├── format.ts     versions / dates / external links
 │       ├── env.ts        minimal window typings
 │       └── types.ts      payload types
-├── lib/                  build output (**committed**, see AGENTS.md §12)
+├── lib/                  build output (**committed**, see AGENTS.md §13)
 │   ├── index.js          host entry (tsc output)
 │   ├── host/*.js         host modules plus .d.ts
 │   └── client.js         the browser bundle, wrapped in __ModuleLoader__
@@ -258,11 +265,17 @@ pnpm run check     # all of the above, plus the pack check and the build-committ
 will not run `prepare` to fill in missing runtime files. So `pnpm install` no longer
 builds (install-time scripts are an automatic rejection in that review) and the build
 hangs off `prepack`; after editing `src/` you must `pnpm run build` and commit `lib/`
-with it, which `pnpm run check` verifies. See [AGENTS.md](./AGENTS.md) §12.
+with it, which `pnpm run check` verifies. See [AGENTS.md](./AGENTS.md) §13.
 
 The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
 `plugins.tab` slot).
+
+The one user setting is `registry`, declared in `src/host/config.ts`. It is marked
+`.volatile()`, which is what makes the host's settings service expose a form for it and
+what lets a write reach the running plugin without a DSH restart. The browser reads and
+writes it through the `configForms` client service (`src/client/registry.ts`); a host
+without that service still renders the tab, with the source shown but not editable.
 
 `pnpm run dev` runs two watchers side by side: `tsc --watch` owns `lib/index.js`
 and `lib/host/**`, esbuild owns `lib/client.js`, so neither overwrites the other.

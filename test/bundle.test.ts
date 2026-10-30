@@ -48,3 +48,17 @@ test('registryBase prefers the configured registry and strips the slash', () => 
   assert.equal(registryBase({ registry: null, resolved: 'https://registry.yarnpkg.com/' }), 'https://registry.yarnpkg.com')
   assert.equal(registryBase(undefined), 'https://registry.npmjs.org')
 })
+
+test('a saved choice outranks the manager and pnpm', () => {
+  assert.equal(
+    registryBase({ registry: 'https://registry.npmmirror.com/', resolved: 'https://registry.yarnpkg.com/' }, 'https://registry.example.com/'),
+    'https://registry.example.com',
+  )
+  assert.equal(registryBase({ registry: null, resolved: 'https://registry.yarnpkg.com/' }, 'https://registry.example.com'), 'https://registry.example.com')
+})
+
+test('an empty saved choice means follow pnpm, not "no registry"', () => {
+  assert.equal(registryBase({ registry: null, resolved: 'https://registry.yarnpkg.com/' }, ''), 'https://registry.yarnpkg.com')
+  assert.equal(registryBase({ registry: null, resolved: 'https://registry.yarnpkg.com/' }, '   '), 'https://registry.yarnpkg.com')
+  assert.equal(registryBase({ registry: null, resolved: null }, ''), 'https://registry.npmjs.org')
+})

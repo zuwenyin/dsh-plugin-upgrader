@@ -19,9 +19,15 @@
  * (`already-installed`). The old version is reported back so the caller can
  * offer a restore.
  *
+ * The one user setting is `registry` (see `./host/config.ts`): it decides both
+ * which registry the version list is read from and which one an install asks
+ * first. It is declared volatile so the host's settings service exposes it, and
+ * so a change reaches the running plugin without restarting DSH.
+ *
  * @module dsh-plugin-upgrader
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { savedRegistry, type UpgraderConfig } from './host/config.ts'
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type StepOutcome } from './host/install.ts'
@@ -36,6 +42,15 @@ import {
   type PluginManager,
   type TagEntryLike,
 } from './host/manager.ts'
+
+/**
+ * The plugin's config schema, read by the loader before `apply` runs.
+ *
+ * Exported as a value rather than declared inside `apply` because the loader
+ * looks for `Config` on the module namespace itself; a schema the running
+ * plugin never exposes is a schema the settings page cannot find.
+ */
+export { Config } from './host/config.ts'
 
 /** Stable plugin name; matches the cordis.patch.yml insert id. */
 export const name = 'plugin-upgrader'
@@ -141,14 +156,25 @@ interface RawStep {
  * Mount the host half.
  *
  * @param ctx - the plugin context.
+ * @param config - the validated config; `registry` is a live reference, so it
+ *   is read per request instead of copied once at load.
  */
-export function apply(ctx: HostContext): void {
+export function apply(ctx: HostContext, config?: UpgraderConfig): void {
   const packumentCache = new Map<string, PackumentEntryLike>()
   const tagCache = new Map<string, TagEntryLike>()
   const jobs = new Map<string, JobRecord>()
   let inFlight: { requestId: string } | null = null
   /** The job a manager event belongs to, while one is running. */
   let liveJob: JobRecord | null = null
+
+  /**
+   * The registry the user picked, read fresh on every use.
+   *
+   * The reference is updated in place when the settings form writes, so
+   * capturing the value once at load would pin the plugin to the registry it
+   * started with — the exact bug a reload-free setting exists to avoid.
+   */
+  const chosenRegistry = (): string => savedRegistry(config)
 
   const pruneJobs = (): void => {
     const cutoff = Date.now() - JOB_RETENTION_MS
@@ -224,6 +250,7 @@ export function apply(ctx: HostContext): void {
             job.requestIds.push(requestId)
             inFlight = { requestId }
           },
+          chosenRegistry(),
         )
         inFlight = null
         job.heartbeatAt = Date.now()
@@ -295,7 +322,11 @@ export function apply(ctx: HostContext): void {
         pruneJobs()
         const live = activeJob()
         writeJson(res, 200, {
-          ...(await buildOverview(ctx, packumentCache, tagCache, { force, locale })),
+          ...(await buildOverview(ctx, packumentCache, tagCache, {
+            force,
+            locale,
+            registry: chosenRegistry(),
+          })),
           /**
            * The tab is remounted whenever the Plugins page is reopened, and the
            * job map only lives in this process. Reporting the live job lets a

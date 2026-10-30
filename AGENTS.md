@@ -250,7 +250,50 @@ once`、`a bundle the manager already reads as disabled is re-selected, then dro
 
 ---
 
-## 12. `lib/` 是提交进仓库的，不是构建垃圾
+## 12. 安装源是用户能改的设置，不是让用户改文件
+
+**不可退化。** issue #1 的原话是「除了让AI改，就不能自己改吗」：默认源是
+`registry.npmjs.org`，想换 `registry.npmmirror.com` 只能改 `~/.npmrc` 或
+`cordis.patch.yml`。插件页自己的安装对话框有换源，但那是**装失败后的补救**，
+不保存，下次还是默认源。
+
+- 版本页顶部有「注册表」按钮：官方源 / 大陆镜像 / `pluginManager` 配的源 / 自己填地址，
+  外加「跟随 pnpm 配置」（默认，等同于此前的行为）。
+- **读和写必须是同一个源**：`registryBase()` 决定版本列表从哪读，`runStep` 把同一个值
+  交给 `installBundle`。只有一边跟随的话，列表会列出目标源根本没有的版本。
+- 选择写进 profile（`cordis.patch.yml` 的 `plugin-upgrader` 行），重启和换浏览器都还在。
+
+**为什么必须用 volatile Config 而不是别的办法：**
+
+- `SettingsForms.describe()` 只投影带 `.volatile()` 的字段，没有 volatile 字段的插件
+  **完全没有设置页**；而且 `autoGenerate` 不生成页面，客户端必须自己画。
+- 非 volatile 的写入会重启插件（`Entry.update` → 重新挂载）。volatile-only 的写入走
+  `_commitVolatile()`，直接改运行中的引用并发 `loader/volatile-update`，不重启。
+- 所以 `apply` 必须**每次读** `config.registry.get()`，不能在加载时把值抄成字符串——
+  抄一次就等于把设置钉死在启动时的那个源上，正是这个功能要避免的 bug。
+- 旧的 `settings.register(ns, schema)` API 在 0.1.7 之后不存在了；从
+  `@deepseek-ai/dsh-settings` 里 import 那些被删掉的具名导出会让宿主直接起不来。
+
+**代码：** `src/host/config.ts`（`Config`、`savedRegistry`）、`src/host/bundle.ts:66`
+`registryBase(registries, preferred)`、`src/host/install.ts:436` `runStep(..., registry)`、
+`src/index.ts` 的 `chosenRegistry()`；浏览器端 `src/client/registry.ts`
+（`useRegistrySetting`、`offeredRegistries`）、`src/client/components/RegistryPicker.ts`。
+文案 `src/client/copy.ts` 的 `registry*` 一组。
+
+**守护：** `test/config.test.ts`（8 条：默认值、volatile 标记、地址校验、旧配置兼容）、
+`test/registry-picker.test.ts`（5 条：可选源去重与顺序）、`test/install.test.ts`
+（「a chosen registry is passed to the manager」「no choice leaves the manager own
+registry in charge」——`undefined` 和 `null` 对 manager 是两件事，前者保留
+`pluginManager.registry`，后者会覆盖成 pnpm 的源）、`test/overview.test.ts`
+（「the saved registry is what versions are read from」）。
+
+**宿主没有 `configForms` 时**（没挂 ui-settings）：标签页照常渲染，只显示源、不给改，
+并说明原因。**不要**为了「看起来能用」而把选择存进 localStorage——那只在一个浏览器里
+生效，用户会以为改成功了。
+
+---
+
+## 13. `lib/` 是提交进仓库的，不是构建垃圾
 
 `.gitignore` 里**没有** `lib/`。构建产物和 `src/` 一起进 git，原因不是洁癖：
 

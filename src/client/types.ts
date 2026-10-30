@@ -54,6 +54,13 @@ export interface OverviewRow {
 export interface Overview {
   generatedAt: number
   registry: string
+  /**
+   * The registry saved in this plugin's own config, verbatim.
+   *
+   * Empty means "follow pnpm". `registry` above is already resolved, so it
+   * cannot tell the picker whether a choice was made.
+   */
+  savedRegistry?: string
   registries: { registry: string | null; fallbackRegistries: readonly string[]; resolved: string | null }
   runtimeVersion: string | null
   bundles: OverviewRow[]
@@ -134,6 +141,33 @@ export interface ClientContext {
     inject: (name: string, body: () => unknown) => unknown
     register: (options: SlotOptions, component: unknown) => unknown
   }
+}
+
+/**
+ * One settings form, as far as this bundle calls it.
+ *
+ * Mirrors the `configForms` controller: a snapshot, a subscription, and a
+ * revision-fenced write. Only `set` is used, but `mutate` is declared because a
+ * host that has the service has all of it, and a narrower type would have to be
+ * re-checked at every call.
+ */
+export interface ConfigFormLike {
+  getSnapshot: () => ConfigFormSnapshotLike
+  subscribe: (listener: () => void) => (() => void) | undefined
+  set: (field: string, value: unknown) => Promise<boolean>
+}
+
+/** What one settings form currently holds. */
+export interface ConfigFormSnapshotLike {
+  status: 'loading' | 'ready' | 'unavailable' | string
+  value: Record<string, unknown> | undefined
+  writable: boolean
+  revision?: number
+}
+
+/** The `configForms` service, as far as this bundle calls it. */
+export interface ConfigFormsLike {
+  get: (entryId: string) => ConfigFormLike
 }
 
 /** Slot registration options for a Plugins-page tab. */

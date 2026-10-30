@@ -43,10 +43,20 @@ export interface RegistryReport {
     resolved?: string | null;
 }
 /**
- * Registry base URL: `null` is pnpm's own configured registry.
+ * The registry this tab reads versions from.
+ *
+ * Three layers, in order: the choice saved in this plugin's own config, then
+ * whatever the manager was configured with, then whatever pnpm itself names.
+ * `null` means "not configured", not "no registry": pnpm always has one, and
+ * the last resort is the public registry.
+ *
+ * The saved choice wins because it is the only one the user can change from
+ * this page, and a choice that only affected installs would make the version
+ * list answer from a different source than the one a click would fetch from.
  *
  * @param registries - manager answer.
+ * @param preferred - the choice saved in this plugin's config, if any.
  * @returns a URL without a trailing slash.
  */
-export declare function registryBase(registries: RegistryReport | undefined | null): string;
+export declare function registryBase(registries: RegistryReport | undefined | null, preferred?: string | null): string;
 //# sourceMappingURL=bundle.d.ts.map

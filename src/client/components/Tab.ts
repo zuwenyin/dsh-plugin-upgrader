@@ -13,10 +13,21 @@ import { cancelJob, submitJob, useOverview, watchJob } from '../api.ts'
 import { reloadWhenBootDocumentFresh } from '../boot.ts'
 import { getH, getReact } from '../env.ts'
 import { activeLocaleId, replacedAppearance, useAlive, useLocaleRevision } from '../hooks.ts'
+import { useRegistrySetting } from '../registry.ts'
 import { CSS, STYLE_ID } from '../styles.ts'
-import type { Banner, JobSnapshot, LocaleLike, OverviewRow, OwnerProps, StepRecord, T } from '../types.ts'
+import type {
+  Banner,
+  ConfigFormsLike,
+  JobSnapshot,
+  LocaleLike,
+  OverviewRow,
+  OwnerProps,
+  StepRecord,
+  T,
+} from '../types.ts'
 import { JobPanel } from './JobPanel.ts'
 import { PluginRow } from './PluginRow.ts'
+import { RegistryPicker } from './RegistryPicker.ts'
 
 /**
  * This package's own name.
@@ -41,6 +52,8 @@ const APPEARANCE_RELOAD_DELAY_MS = 1200
 export interface TabProps extends OwnerProps {
   t: T
   locale?: LocaleLike | undefined
+  /** The settings service, when this host mounts one. */
+  configForms?: ConfigFormsLike | undefined
 }
 
 /**
@@ -52,10 +65,11 @@ export interface TabProps extends OwnerProps {
 export function Tab(props: TabProps): unknown {
   const h = getH()
   const React = getReact()
-  const { t, locale } = props
+  const { t, locale, configForms } = props
   const revision = useLocaleRevision(locale)
   const localeId = React.useMemo(() => activeLocaleId(locale), [locale, revision])
   const { data, error, loading, reload } = useOverview(localeId)
+  const registry = useRegistrySetting(configForms, 'plugin-upgrader')
 
   const [query, setQuery] = React.useState('')
   const [picked, setPicked] = React.useState<Set<string>>(() => new Set<string>())
@@ -205,6 +219,20 @@ export function Tab(props: TabProps): unknown {
 
   const busy = busyName !== undefined || (job !== undefined && (job.status === 'running' || job.status === 'queued'))
 
+  /**
+   * Every address the picker should offer, best first.
+   *
+   * The active one comes first because it is what the versions below were read
+   * from; the manager's configured registry and its fallbacks follow, so a
+   * private registry set up in the profile is selectable without typing it.
+   */
+  const knownRegistries = [
+    data?.registry,
+    data?.registries?.registry,
+    ...(data?.registries?.fallbackRegistries ?? []),
+    data?.registries?.resolved,
+  ]
+
   // Only upgradable rows can be picked, so a stale pick (a plugin that just got
   // upgraded, or dropped out of the registry) never blocks the button.
   const pickedCount = upgradable.reduce((count, row) => (picked.has(row.name) ? count + 1 : count), 0)
@@ -316,7 +344,14 @@ export function Tab(props: TabProps): unknown {
           ),
           data?.registry === undefined
             ? null
-            : h('span', { className: 'dsh-pu-mono' }, `${t('registry')}: ${data.registry}`),
+            : h(RegistryPicker, {
+                t,
+                active: data.registry,
+                known: knownRegistries,
+                setting: registry,
+                disabled: busy,
+                onChanged: () => reload(true),
+              }),
         ),
       ),
       h(

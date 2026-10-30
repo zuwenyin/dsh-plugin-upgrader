@@ -117,3 +117,55 @@ test('a failed lookup leaves a reason on the row instead of an empty list', asyn
     globalThis.fetch = original
   }
 })
+
+test('the saved registry is what versions are read from', async () => {
+  /*
+   * The picker's whole point is that the list and the install agree on one
+   * source. Reading versions from pnpm's registry while installing from the
+   * chosen one would show versions that the chosen source may not have.
+   */
+  const requested: string[] = []
+  const original = globalThis.fetch
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input)
+    if (url.includes('api.github.com')) return new Response('[]', { status: 200 })
+    requested.push(url)
+    return new Response(JSON.stringify({ versions: { '1.0.0': {}, '1.1.0': {} }, 'dist-tags': { latest: '1.1.0' } }), {
+      status: 200,
+    })
+  }) as typeof fetch
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      { registry: 'https://registry.example.com/' },
+    )
+    assert.ok(
+      requested.some((url) => url.startsWith('https://registry.example.com/')),
+      `expected a read from the saved registry, got ${requested.join(', ')}`,
+    )
+    assert.equal(overview.registry, 'https://registry.example.com')
+    // The saved value is reported verbatim so the picker can tell "chose this"
+    // from "rode on pnpm's config".
+    assert.equal(overview.savedRegistry, 'https://registry.example.com/')
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('no saved registry still reports an empty choice', async () => {
+  const stub = stubFetch(() => {})
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      {},
+    )
+    assert.equal(overview.savedRegistry, '')
+    assert.equal(overview.registry, 'https://registry.npmjs.org')
+  } finally {
+    stub.restore()
+  }
+})

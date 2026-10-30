@@ -86,6 +86,42 @@ function fakeManager(plan: {
   return { manager, calls }
 }
 
+test('a chosen registry is passed to the manager', async () => {
+  const { manager, calls } = fakeManager({})
+  await runStep(manager, { name: 'pkg', version: '1.2.3' }, () => {}, undefined, 'https://registry.npmmirror.com/')
+
+  assert.equal(calls.install.length, 1)
+  assert.equal(calls.install[0]?.options?.registry, 'https://registry.npmmirror.com/')
+})
+
+test('no choice leaves the manager own registry in charge', async () => {
+  /*
+   * `undefined` and `null` are different to the manager: `null` means "ask
+   * pnpm", while omitting the option keeps whatever `pluginManager.registry`
+   * the profile configured. Sending `null` for an unset choice would quietly
+   * override that config, so the option must be absent.
+   */
+  const { manager, calls } = fakeManager({})
+  await runStep(manager, { name: 'pkg', version: '1.2.3' }, () => {})
+
+  assert.equal(calls.install.length, 1)
+  assert.equal(Object.hasOwn(calls.install[0]?.options ?? {}, 'registry'), false)
+})
+
+test('a blank choice is treated as no choice', async () => {
+  const { manager, calls } = fakeManager({})
+  await runStep(manager, { name: 'pkg', version: '1.2.3' }, () => {}, undefined, '   ')
+
+  assert.equal(Object.hasOwn(calls.install[0]?.options ?? {}, 'registry'), false)
+})
+
+test('the chosen registry is trimmed before it reaches the manager', async () => {
+  const { manager, calls } = fakeManager({})
+  await runStep(manager, { name: 'pkg', version: '1.2.3' }, () => {}, undefined, '  https://registry.npmmirror.com/  ')
+
+  assert.equal(calls.install[0]?.options?.registry, 'https://registry.npmmirror.com/')
+})
+
 test('a plain install asks for the exact version and reports success', async () => {
   const { manager, calls } = fakeManager({})
   const log: string[] = []
