@@ -39,6 +39,8 @@ English · [中文](./README.md)
   Built-ins cannot be edited or deleted; your own can. Every row can be tested on its
   own, and so can the source currently in use.
 
+![Source manager](./screenshots/sources.png)
+
 > **Changing this repo? Read [AGENTS.md](./AGENTS.md) first.** It lists the behaviour
 > that already works and must keep working, with the code location and the test that
 > guards each one. Two of those features (the `GH` links and the in-place upgrade)
