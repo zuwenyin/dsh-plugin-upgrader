@@ -34,6 +34,10 @@ English · [中文](./README.md)
   (official, the mainland mirror, or an address you type). The version list is re-read
   from the new source immediately and installs follow it; the choice is written to the
   profile, so it survives a restart and is the same in every browser.
+- **Manage sources in a dialog** — the Registry button opens a dialog listing the
+  built-in sources, the ones `pluginManager` is configured with, and the ones you added.
+  Built-ins cannot be edited or deleted; your own can. Every row can be tested on its
+  own, and so can the source currently in use.
 
 > **Changing this repo? Read [AGENTS.md](./AGENTS.md) first.** It lists the behaviour
 > that already works and must keep working, with the code location and the test that
@@ -45,9 +49,15 @@ English · [中文](./README.md)
 A **Versions** tab appears next to *Installed* and *Discover* on the Plugins page:
 
 - Header counts: upgradable / installed / version count
-- The header **Registry** control switches the install source: the official registry,
-  the mainland mirror, whatever `pluginManager` is configured with, or an address you
-  type; *Follow pnpm's config* keeps pnpm's own registry (usually the one in `.npmrc`)
+- The header **Registry** control opens the source dialog:
+  - built-in sources (official registry, mainland mirror): switch to and test, never edit
+    or delete
+  - sources from `pluginManager`: use one directly, or keep it in your own list
+  - sources you added: edit and delete; deleting the one in use falls back to
+    *Follow pnpm's config*
+  - **Test** on a row sends one `/-/ping` (falling back to the registry root) with a
+    1.5 s deadline and shows the verdict under that row
+  - the footer's *Follow pnpm's config* keeps pnpm's own registry (usually `.npmrc`)
 - **Upgrade all** handles every upgradable plugin; the selection bar below handles
   **Upgrade selected**
 - **Check for updates** bypasses the 5-minute registry cache
@@ -220,7 +230,7 @@ dsh-plugin-upgrader/
 │   │   └── manager.ts    the minimal host pluginManager type contract
 │   └── client/           browser side (modules, bundled into one file)
 │       ├── index.ts      createPlugin(require): slot registration entry
-│       ├── components/   Tab / PluginRow / VersionLine / JobPanel
+│       ├── components/   Tab / PluginRow / VersionLine / JobPanel / SourceDialog
 │       ├── copy.ts       zh / en strings
 │       ├── styles.ts     scoped CSS
 │       ├── hooks.ts      locale subscription, overview fetching
@@ -271,11 +281,14 @@ The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
 `plugins.tab` slot).
 
-The one user setting is `registry`, declared in `src/host/config.ts`. It is marked
-`.volatile()`, which is what makes the host's settings service expose a form for it and
-what lets a write reach the running plugin without a DSH restart. The browser reads and
-writes it through the `configForms` client service (`src/client/registry.ts`); a host
-without that service still renders the tab, with the source shown but not editable.
+The user settings are `registry` (the source in use, empty for "follow pnpm") and
+`customRegistries` (the sources the user added), both declared in `src/host/config.ts`.
+Both are marked `.volatile()`, which is what makes the host's settings service expose a
+form for them and what lets a write reach the running plugin without a DSH restart. The
+browser reads and writes them through the `configForms` client service
+(`src/client/registry.ts`); a host without that service still renders the tab, with the
+source shown but not editable. The two built-in sources are constants, never entries in
+`customRegistries` — that is why no click can edit or delete them.
 
 `pnpm run dev` runs two watchers side by side: `tsc --watch` owns `lib/index.js`
 and `lib/host/**`, esbuild owns `lib/client.js`, so neither overwrites the other.

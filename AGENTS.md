@@ -257,11 +257,19 @@ once`、`a bundle the manager already reads as disabled is re-selected, then dro
 `cordis.patch.yml`。插件页自己的安装对话框有换源，但那是**装失败后的补救**，
 不保存，下次还是默认源。
 
-- 版本页顶部有「注册表」按钮：官方源 / 大陆镜像 / `pluginManager` 配的源 / 自己填地址，
-  外加「跟随 pnpm 配置」（默认，等同于此前的行为）。
+- 版本页顶部有「注册表」按钮，打开**安装源对话框**：自带源（官方源 / 大陆镜像）、
+  `pluginManager` 配的源、用户自己加的源，外加「跟随 pnpm 配置」（默认，等同于此前的行为）。
+- **自带源不能改也不能删，而且是结构上做不到**：它们是 `WELL_KNOWN_REGISTRIES` 常量，
+  永远不写进 `customRegistries`，所以列表里根本没有那一行可以删。**不要**改成「渲染出来
+  但把按钮 disabled」——那种写法会在一次看起来很无辜的重构里被恢复成可点。
+- 自己加的源可以改、可以删；删除或改写正在用的那个时，`registry` 必须一起跟着变，
+  否则安装会被指向一个列表里已经不存在的地址。
 - **读和写必须是同一个源**：`registryBase()` 决定版本列表从哪读，`runStep` 把同一个值
   交给 `installBundle`。只有一边跟随的话，列表会列出目标源根本没有的版本。
 - 选择写进 profile（`cordis.patch.yml` 的 `plugin-upgrader` 行），重启和换浏览器都还在。
+- 每一行都能「测试」：`POST /api/plugin-upgrader/registry/test` 打 `/-/ping`，失败退回根地址，
+  1500 ms 超时（`PROBE_TIMEOUT_MS`，和宿主自己的源探测同一套预算）。探测的是**调用方给的
+  地址**，所以还没保存的草稿也能测。
 
 **为什么必须用 volatile Config 而不是别的办法：**
 
@@ -274,14 +282,18 @@ once`、`a bundle the manager already reads as disabled is re-selected, then dro
 - 旧的 `settings.register(ns, schema)` API 在 0.1.7 之后不存在了；从
   `@deepseek-ai/dsh-settings` 里 import 那些被删掉的具名导出会让宿主直接起不来。
 
-**代码：** `src/host/config.ts`（`Config`、`savedRegistry`）、`src/host/bundle.ts:66`
+**代码：** `src/host/config.ts`（`Config`、`savedRegistry`）、`src/host/registry.ts`
+`probeRegistry` / `PROBE_TIMEOUT_MS`、`src/host/bundle.ts:66`
 `registryBase(registries, preferred)`、`src/host/install.ts:436` `runStep(..., registry)`、
-`src/index.ts` 的 `chosenRegistry()`；浏览器端 `src/client/registry.ts`
-（`useRegistrySetting`、`offeredRegistries`）、`src/client/components/RegistryPicker.ts`。
-文案 `src/client/copy.ts` 的 `registry*` 一组。
+`src/index.ts` 的 `chosenRegistry()` 与 `POST registry/test` 路由；浏览器端
+`src/client/registry.ts`（`useRegistrySetting`、`offeredRegistries`、`addSource` /
+`editSource` / `removeSource`）、`src/client/components/SourceDialog.ts`。
+文案 `src/client/copy.ts` 的 `registry*` 与 `source*` 两组。
 
-**守护：** `test/config.test.ts`（8 条：默认值、volatile 标记、地址校验、旧配置兼容）、
-`test/registry-picker.test.ts`（5 条：可选源去重与顺序）、`test/install.test.ts`
+**守护：** `test/config.test.ts`（默认值、两处 volatile 标记、地址校验、旧配置兼容、
+数组整体校验）、`test/sources.test.ts`（13 条：自带源识别、增删改的越界 / 重复 /
+非法地址拒绝）、`test/probe.test.ts`（6 条：`/-/ping` → 根地址回退、超时预算、
+空地址不发请求）、`test/install.test.ts`
 （「a chosen registry is passed to the manager」「no choice leaves the manager own
 registry in charge」——`undefined` 和 `null` 对 manager 是两件事，前者保留
 `pluginManager.registry`，后者会覆盖成 pnpm 的源）、`test/overview.test.ts`

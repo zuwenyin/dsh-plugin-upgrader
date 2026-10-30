@@ -167,6 +167,38 @@ export async function cancelJob(): Promise<void> {
 }
 
 /**
+ * Ask the host whether one registry is reachable right now.
+ *
+ * The browser cannot make this call itself: a registry answers a cross-origin
+ * preflight with whatever it likes, and a private one behind a token answers
+ * nothing at all from a page. The host does the request and reports the verdict
+ * plus the underlying cause.
+ *
+ * @param registry - the address to test.
+ * @returns whether it answered and what to show the user.
+ * @throws a {@link RequestFailure} when the host rejects the address.
+ */
+export async function probeRegistry(registry: string): Promise<RegistryProbe> {
+  const response = await fetch(`${API}/registry/test`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ registry }),
+  })
+  return readJson<RegistryProbe>(response)
+}
+
+/** What {@link probeRegistry} found. */
+export interface RegistryProbe {
+  /** Whether the source answered with a 2xx. */
+  ok: boolean
+  /** One sentence for the dialog. */
+  detail: string
+  /** Round-trip time in milliseconds, when the request completed. */
+  ms?: number
+}
+
+/**
  * Summarize a settled job for the banner.
  *
  * @param settled - the finished snapshot.

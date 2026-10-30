@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.7.0 — 2026-10-30
+
+- **The source is now a dialog, not a dropdown.** The header control opens a dialog
+  that lists every source this tab can use: the two built-in addresses, the ones
+  `pluginManager` is configured with, and the ones the user added. Each row can be
+  tested against the host (`/-/ping`, falling back to the registry root, 1500 ms — the
+  same endpoint and deadline the harness's own registry probe uses) and switched to
+  with one click, so "is this mirror actually up" is answered in the place the user
+  picks it instead of by a failed install.
+- **The built-in sources have no edit and no delete, by construction.** They are
+  compiled in (`src/client/registry.ts` `WELL_KNOWN_REGISTRIES`) and never written
+  into the saved list, so there is no row to edit or remove — not a disabled button
+  that a later refactor could re-enable.
+- **Custom sources are a second volatile field**, `customRegistries`, so the list
+  persists through the same settings write as the choice and is the same in every
+  browser. Adding, editing and deleting all send the whole array: one bad element fails
+  the write, so validating the list before saving and storing it verbatim afterwards
+  keeps a click from half-applying. Deleting or editing the source in use also moves
+  the choice, so an install can never be redirected to an address the list no longer
+  holds.
+
 ## 1.6.0 — 2026-10-30
 
 - **The install source is now a setting, not a file edit.** The Versions tab header

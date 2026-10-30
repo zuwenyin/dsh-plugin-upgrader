@@ -3,12 +3,13 @@
  *
  * The Plugins page's own tabs run in the browser, and the browser cannot read
  * the profile's dependency list or reach the npm registry reliably (CORS,
- * private registries, tokens). This half owns the four things the page needs:
+ * private registries, tokens). This half owns the five things the page needs:
  *
  *   GET  /api/plugin-upgrader/overview      installed bundles + published versions
  *   POST /api/plugin-upgrader/job           start a batch of upgrade/switch steps
  *   GET  /api/plugin-upgrader/job?id=<id>   poll that batch
  *   POST /api/plugin-upgrader/cancel        stop the in-flight step
+ *   POST /api/plugin-upgrader/registry/test is one registry reachable right now?
  *
  * Every route is loopback-only: a batch installs packages, so a paired remote
  * device or a cross-site page must never reach it.
@@ -19,10 +20,12 @@
  * (`already-installed`). The old version is reported back so the caller can
  * offer a restore.
  *
- * The one user setting is `registry` (see `./host/config.ts`): it decides both
- * which registry the version list is read from and which one an install asks
- * first. It is declared volatile so the host's settings service exposes it, and
- * so a change reaches the running plugin without restarting DSH.
+ * The user settings are `registry` and `customRegistries` (see
+ * `./host/config.ts`): the first decides both which registry the version list is
+ * read from and which one an install asks first, the second is the list of
+ * sources the picker offers beside the two built-in ones. Both are declared
+ * volatile so the host's settings service exposes them, and so a change reaches
+ * the running plugin without restarting DSH.
  *
  * @module dsh-plugin-upgrader
  */
@@ -33,6 +36,7 @@ import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type StepOutcome } from './host/install.ts'
 import { profileDirFrom, recoverPendingDrop } from './host/manifest.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
+import { probeRegistry } from './host/registry.ts'
 import {
   asPluginManager,
   type HostContext,
@@ -466,6 +470,21 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
           }
         }
         writeJson(res, 200, { status: 'cancelling' })
+        return
+      }
+      if (req.method === 'POST' && route === 'registry/test') {
+        const body = await readJsonBody(req)
+        const address = typeof body?.registry === 'string' ? body.registry.trim() : ''
+        if (!/^https?:\/\/\S+$/i.test(address)) {
+          writeJson(res, 400, { error: 'invalid-registry' })
+          return
+        }
+        /*
+         * Always the address the caller named, never the saved one: the whole
+         * point of the button is to test a source before choosing it, including
+         * one the user just typed and has not saved yet.
+         */
+        writeJson(res, 200, await probeRegistry(address))
         return
       }
       writeJson(res, 404, { error: 'not-found' })

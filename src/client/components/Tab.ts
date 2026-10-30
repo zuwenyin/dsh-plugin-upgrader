@@ -27,7 +27,7 @@ import type {
 } from '../types.ts'
 import { JobPanel } from './JobPanel.ts'
 import { PluginRow } from './PluginRow.ts'
-import { RegistryPicker } from './RegistryPicker.ts'
+import { RegistrySourceButton } from './SourceDialog.ts'
 
 /**
  * This package's own name.
@@ -344,7 +344,7 @@ export function Tab(props: TabProps): unknown {
           ),
           data?.registry === undefined
             ? null
-            : h(RegistryPicker, {
+            : h(RegistrySourceButton, {
                 t,
                 active: data.registry,
                 known: knownRegistries,

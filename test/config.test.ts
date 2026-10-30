@@ -28,9 +28,10 @@ test('the schema has a default for every field, so a bare patch row still loads'
   const result = validate(undefined)
   assert.equal(result.issues, undefined)
   assert.equal(result.value?.registry?.get(), '')
+  assert.deepEqual(result.value?.customRegistries?.get(), [])
 })
 
-test('the registry field is volatile, which is what exposes it to the settings page', () => {
+test('the settings fields are volatile, which is what exposes them to the settings page', () => {
   /*
    * `toJSON()` is a reference table: the root schema is `refs[uid]`, and each
    * field points at another entry. Resolve the root before reading `dict`, or
@@ -41,9 +42,11 @@ test('the registry field is volatile, which is what exposes it to the settings p
     refs: Record<string, { dict?: Record<string, number>; meta?: { volatile?: boolean } }>
   }
   const root = json.refs[String(json.uid)]
-  const field = root?.dict?.registry
-  assert.equal(typeof field, 'number', 'the root schema has a registry field')
-  assert.equal(json.refs[String(field)]?.meta?.volatile, true)
+  for (const name of ['registry', 'customRegistries']) {
+    const field = root?.dict?.[name]
+    assert.equal(typeof field, 'number', `the root schema has a ${name} field`)
+    assert.equal(json.refs[String(field)]?.meta?.volatile, true, name)
+  }
 })
 
 test('the schema accepts an http(s) registry and an empty value', () => {
@@ -61,6 +64,43 @@ test('the schema rejects what the manager would reject', () => {
   for (const value of ['not a url', 'ftp://registry.example.com/', 'registry.npmjs.org']) {
     assert.notEqual(validate({ registry: value }).issues, undefined, value)
   }
+})
+
+test('the source list accepts absolute addresses only', () => {
+  /*
+   * One bad element fails the whole array write, so the validation the dialog
+   * does before saving must be the same one the schema applies here.
+   */
+  assert.equal(validate({ customRegistries: [] }).issues, undefined)
+  assert.equal(
+    validate({ customRegistries: ['https://a.example.com/', 'http://npm.internal:4873'] }).issues,
+    undefined,
+  )
+  for (const value of ['not a url', 'ftp://registry.example.com/', '']) {
+    assert.notEqual(validate({ customRegistries: [value] }).issues, undefined, value)
+  }
+})
+
+test('a source list with one bad entry is rejected whole', () => {
+  /*
+   * The dialog sends the entire array on every edit, so a schema that accepted
+   * the good prefix and dropped the rest would silently lose a source.
+   */
+  const result = validate({ customRegistries: ['https://a.example.com/', 'bad'] })
+  assert.notEqual(result.issues, undefined)
+})
+
+test('the source list is stored and read back as a plain array', () => {
+  /*
+   * `customRegistries` holds whatever the user typed, verbatim — the host does
+   * not add or remove a trailing slash, because that would rewrite a value the
+   * user can see in the dialog.
+   */
+  const result = validate({ customRegistries: ['https://a.example.com', 'http://b.example.com/'] })
+  assert.deepEqual(result.value?.customRegistries?.get(), [
+    'https://a.example.com',
+    'http://b.example.com/',
+  ])
 })
 
 test('savedRegistry reads through the live reference', () => {

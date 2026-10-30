@@ -179,6 +179,40 @@ export declare const UPSTREAM_REGISTRY = "https://registry.npmjs.org";
  */
 export declare function versionsMissingFromMirror(base: string, packageName: string, above: string | undefined, cache: Map<string, PackumentEntry>, force: boolean): Promise<string[]>;
 /**
+ * How long a reachability probe waits before calling a source unreachable.
+ *
+ * The harness's own registry probe uses the same 1500 ms deadline, measured
+ * against the same two addresses. Long enough for a mirror on a slow link,
+ * short enough that a user clicking "test" gets an answer instead of a spinner.
+ */
+export declare const PROBE_TIMEOUT_MS = 1500;
+/** What a reachability probe found. */
+export interface ProbeResult {
+    /** Whether the source answered with a 2xx. */
+    ok: boolean;
+    /** One sentence for the tab: the status, or what failed. */
+    detail: string;
+    /** Round-trip time in milliseconds, when the request completed. */
+    ms?: number;
+}
+/**
+ * Ask one registry whether it is reachable right now.
+ *
+ * A registry's `/-/ping` endpoint is the cheapest thing it serves, and both the
+ * public registry and the mainland mirror implement it; a source that is not an
+ * npm registry still answers the bare root, so a failed ping falls back to the
+ * root rather than declaring a working mirror broken.
+ *
+ * The answer must not carry the package-specific wording `fetchPackument` uses
+ * ("not found" would be a lie — the probe asks for no package), but it must
+ * carry the same underlying cause, because "unreachable" alone does not tell a
+ * user whether they typed the address wrong or their network is down.
+ *
+ * @param base - the registry address to probe.
+ * @returns whether it answered, and what to show the user.
+ */
+export declare function probeRegistry(base: string): Promise<ProbeResult>;
+/**
  * Trim one packument down to what the tab renders.
  *
  * `dist-tags.latest` is normally the newest stable release, and it is trusted as

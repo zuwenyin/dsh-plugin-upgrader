@@ -25,6 +25,9 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
   而不是假装已经是最新版。
 - **自己选安装源** —— 版本页顶部就能切换 npm 源（官方源 / 大陆镜像 / 自己填的私有源），
   选完立刻按新源重读版本列表，升级也走这个源；选择写进 profile，重启和换浏览器都还在。
+- **安装源管理** —— 「注册表」按钮打开一个对话框，里面列出自带源、`pluginManager` 配的源
+  和用户自己加的源；自带源不能改也不能删，自己加的可以随时改/删。每一行都能单独
+  「测试」能不能连上，当前在用的那个也能一键测。
 
 > **要改这个仓库？先读 [AGENTS.md](./AGENTS.md)。** 那里逐条写了「已经实现并且必须继续成立」
 > 的行为、对应代码位置和守护它的测试。上面这些功能里，`GH` 链接和 in-place 升级都曾经
@@ -35,8 +38,12 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 插件页顶部标签栏多出一个「版本」标签，与「已安装」「发现」并列：
 
 - 顶部统计：可升级数量 / 已安装数量 / 每个插件的版本数
-- 顶部「注册表」按钮切换安装源：官方源、大陆镜像、`pluginManager` 配的源，或自己填一个地址；
-  选「跟随 pnpm 配置」则用 pnpm 自己的源（通常是 `~/.npmrc` 里的那个）
+- 顶部「注册表」按钮打开安装源对话框：
+  - 自带源（官方源、大陆镜像）：只能切过去和测试，不能改也不能删
+  - `pluginManager` 里配的源：可以「收进列表」变成自己的常用源，或直接用
+  - 自己加的源：可以改、可以删，删掉的如果正在用会自动退回「跟随 pnpm 配置」
+  - 每行「测试」发一次 `/-/ping`（连不上时退回根地址），1.5 秒超时，结果显示在那一行下面
+  - 底部「跟随 pnpm 配置」用 pnpm 自己的源（通常是 `~/.npmrc` 里的那个）
 - 「一键升级」升全部可升级插件；下面一条选择栏负责「升级选中」
 - 「检查更新」强制刷新 registry 缓存（默认缓存 5 分钟）
 - 搜索框按包名过滤
@@ -180,7 +187,7 @@ dsh-plugin-upgrader/
 ├── src/                  源码（TypeScript）
 │   ├── index.ts          宿主端入口：路由注册、job 调度、加载时恢复 manifest
 │   ├── host/             宿主端逻辑（Node，无 DOM）
-│   │   ├── config.ts     Config schema（volatile 的 registry）、读取用户选择
+│   │   ├── config.ts     Config schema（volatile 的 registry / customRegistries）、读取用户选择
 │   │   ├── overview.ts   组装 overview 载荷（含并发上限）
 │   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表、镜像缺口
 │   │   ├── install.ts    单步安装：in-place 替换、remove 回退、enabled 状态恢复
@@ -194,8 +201,8 @@ dsh-plugin-upgrader/
 │   │   └── manager.ts    宿主 pluginManager 服务的最小类型契约
 │   └── client/           浏览器端（拆成模块，由 esbuild 打成一个文件）
 │       ├── index.ts      createPlugin(require)：槽位注册入口
-│       ├── components/   Tab / PluginRow / VersionLine / JobPanel / RegistryPicker
-│       ├── registry.ts   读写 registry 设置、可选源列表
+│       ├── components/   Tab / PluginRow / VersionLine / JobPanel / SourceDialog
+│       ├── registry.ts   读写安装源设置、可选源列表的增删改
 │       ├── boot.ts       reload 前确认 boot 文档还有效（见 AGENTS.md 第 4 条）
 │       ├── copy.ts       zh / en 文案
 │       ├── styles.ts     作用域 CSS
@@ -250,6 +257,13 @@ pnpm run check     # 以上全部（typecheck + build + test + pack 检查 + 产
 
 宿主端在 `src/index.ts`（`webServer` 前缀路由 `/api/plugin-upgrader`），
 浏览器端在 `src/client/index.ts`（注册 `plugins.tab` 槽位）。
+
+用户设置有两个：`registry`（当前在用的源，空 = 跟随 pnpm）和 `customRegistries`
+（用户自己加的源），都在 `src/host/config.ts` 里声明成 `.volatile()`——这是宿主
+设置服务愿意为它生成表单、并且写入能进到正在运行的插件里而不重启的唯一形状。
+浏览器端通过 `configForms` 服务读写（`src/client/registry.ts`）；没有那个服务的
+宿主照样能渲染这一页，只是源只能看不能改。两个自带源是常量，永远不写进
+`customRegistries`，所以没有任何点击能改它们或删它们。
 
 `pnpm run dev` 会并行跑两个监听器：`tsc --watch` 负责 `lib/index.js` 和
 `lib/host/**`，esbuild 负责 `lib/client.js`，两者输出互不覆盖。注意 esbuild
