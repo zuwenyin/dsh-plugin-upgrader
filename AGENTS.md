@@ -267,9 +267,13 @@ once`、`a bundle the manager already reads as disabled is re-selected, then dro
 - **读和写必须是同一个源**：`registryBase()` 决定版本列表从哪读，`runStep` 把同一个值
   交给 `installBundle`。只有一边跟随的话，列表会列出目标源根本没有的版本。
 - 选择写进 profile（`cordis.patch.yml` 的 `plugin-upgrader` 行），重启和换浏览器都还在。
-- 每一行都能「测试」：`POST /api/plugin-upgrader/registry/test` 打 `/-/ping`，失败退回根地址，
-  1500 ms 超时（`PROBE_TIMEOUT_MS`，和宿主自己的源探测同一套预算）。探测的是**调用方给的
-  地址**，所以还没保存的草稿也能测。
+- 每一行都能「测试」：`POST /api/plugin-upgrader/registry/test` **并发**打 `/-/ping` 和根地址，
+  谁先 2xx 用谁（`PROBE_TIMEOUT_MS = 5000` 是整次探测的预算，不是每个请求的）。
+  探测的是**调用方给的地址**，所以还没保存的草稿也能测。
+- **这两条路不能改回串行。** `registry.npmmirror.com` 的 `/-/ping` 在某些网络要 3～15 秒，
+  根地址只要 0.3 秒；串行会把整个预算花在慢的那条上，然后把大陆镜像报成「连不上」——
+  那正是这个功能存在的理由。失败时的原因也要挑最具体的：有状态码报状态码，其次是超时
+  （`timed out after N ms`），最后才是网络错误原文。
 
 **为什么必须用 volatile Config 而不是别的办法：**
 
@@ -292,8 +296,9 @@ once`、`a bundle the manager already reads as disabled is re-selected, then dro
 
 **守护：** `test/config.test.ts`（默认值、两处 volatile 标记、地址校验、旧配置兼容、
 数组整体校验）、`test/sources.test.ts`（13 条：自带源识别、增删改的越界 / 重复 /
-非法地址拒绝）、`test/probe.test.ts`（6 条：`/-/ping` → 根地址回退、超时预算、
-空地址不发请求）、`test/install.test.ts`
+非法地址拒绝）、`test/probe.test.ts`（8 条：两条路并发、慢 ping 不掩盖快根地址、
+`/-/ping` 被拒时根地址兜底、状态码优先于超时、超时说清预算是多少、空地址不发请求）、
+`test/install.test.ts`
 （「a chosen registry is passed to the manager」「no choice leaves the manager own
 registry in charge」——`undefined` 和 `null` 对 manager 是两件事，前者保留
 `pluginManager.registry`，后者会覆盖成 pnpm 的源）、`test/overview.test.ts`

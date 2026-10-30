@@ -55,8 +55,10 @@ A **Versions** tab appears next to *Installed* and *Discover* on the Plugins pag
   - sources from `pluginManager`: use one directly, or keep it in your own list
   - sources you added: edit and delete; deleting the one in use falls back to
     *Follow pnpm's config*
-  - **Test** on a row sends one `/-/ping` (falling back to the registry root) with a
-    1.5 s deadline and shows the verdict under that row
+  - **Test** on a row asks `/-/ping` and the registry root at the same time and keeps
+    whichever answers first, with a 5 s budget for the whole probe (a sequential probe
+    reported mainland mirrors as unreachable — their `/-/ping` can take 15 s while the
+    root answers in 0.3 s), and shows the verdict under that row
   - the footer's *Follow pnpm's config* keeps pnpm's own registry (usually `.npmrc`)
 - **Upgrade all** handles every upgradable plugin; the selection bar below handles
   **Upgrade selected**

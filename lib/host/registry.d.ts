@@ -181,11 +181,14 @@ export declare function versionsMissingFromMirror(base: string, packageName: str
 /**
  * How long a reachability probe waits before calling a source unreachable.
  *
- * The harness's own registry probe uses the same 1500 ms deadline, measured
- * against the same two addresses. Long enough for a mirror on a slow link,
- * short enough that a user clicking "test" gets an answer instead of a spinner.
+ * The harness's own registry probe uses 1500 ms, but it can afford to: it runs
+ * against the two addresses it already knows and only picks a default. A user
+ * clicking "test" here may be typing a private registry address on a slow link,
+ * and the two paths are raced, so the deadline bounds the whole probe rather
+ * than each request. 5 s is long enough for a genuinely slow mirror to answer and
+ * short enough that a spinner never becomes the answer.
  */
-export declare const PROBE_TIMEOUT_MS = 1500;
+export declare const PROBE_TIMEOUT_MS = 5000;
 /** What a reachability probe found. */
 export interface ProbeResult {
     /** Whether the source answered with a 2xx. */

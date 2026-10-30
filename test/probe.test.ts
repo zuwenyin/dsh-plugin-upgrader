@@ -20,11 +20,16 @@ function stubFetch(handler: (url: string) => Promise<Response>): { calls: string
   }
 }
 
-test('a source that answers its ping endpoint is reachable', async () => {
+/** A rejection shaped like the one `AbortSignal.timeout` produces. */
+function timeoutError(): Error {
+  return Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+}
+
+test('a source that answers is reachable', async () => {
   /*
    * This is the button the request added: "test whether the current source is
-   * usable". A mirror that answers `/-/ping` is usable whatever else it serves,
-   * so the cheapest endpoint is what is asked first.
+   * usable". Both paths are asked at once, so a slow ping cannot hide a fast
+   * root — see the mirror test below for why that matters.
    */
   const stub = stubFetch(async () => new Response('{}', { status: 200 }))
   try {
@@ -32,13 +37,43 @@ test('a source that answers its ping endpoint is reachable', async () => {
     assert.equal(result.ok, true)
     assert.equal(result.detail, 'HTTP 200')
     assert.equal(typeof result.ms, 'number')
-    assert.deepEqual(stub.calls, ['https://registry.npmmirror.com/-/ping'])
+    assert.deepEqual(stub.calls, ['https://registry.npmmirror.com/-/ping', 'https://registry.npmmirror.com/'])
   } finally {
     stub.restore()
   }
 })
 
-test('a ping endpoint that refuses falls back to the registry root', async () => {
+test('a slow ping does not hide a fast root', async () => {
+  /*
+   * The regression this test pins: registry.npmmirror.com answers `/-/ping` in 3
+   * to 15 seconds on some networks while its root answers in a quarter of a
+   * second. Probing the paths in sequence spent the whole deadline on the ping
+   * and reported the mainland mirror — the mirror this whole feature exists for —
+   * as unreachable. Racing them means the cheap answer is the one that counts.
+   *
+   * The assertion is on elapsed time, not just on `ok`: a sequential probe also
+   * ends up reachable here, it just makes the user wait for the slow path first.
+   */
+  const stub = stubFetch(async (url) => {
+    if (url.endsWith('/-/ping')) {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      throw timeoutError()
+    }
+    return new Response('{}', { status: 200 })
+  })
+  try {
+    const startedAt = Date.now()
+    const result = await probeRegistry('https://registry.npmmirror.com/')
+    const elapsed = Date.now() - startedAt
+    assert.equal(result.ok, true)
+    assert.equal(result.detail, 'HTTP 200')
+    assert.ok(elapsed < 150, `answered after ${elapsed} ms; the slow ping was awaited`)
+  } finally {
+    stub.restore()
+  }
+})
+
+test('a ping endpoint that refuses still lets the registry root answer', async () => {
   /*
    * Not every registry serves `/-/ping` — a private Verdaccio, or a plain file
    * server behind a proxy, answers the root only. Declaring those unreachable
@@ -75,12 +110,38 @@ test('a source that answers neither path is unreachable, with the reason', async
   }
 })
 
-test('the last status wins when both paths answer but neither succeeds', async () => {
-  const stub = stubFetch(async () => new Response('down', { status: 503 }))
+test('a status line is reported instead of a timeout', async () => {
+  /*
+   * "HTTP 503" says the host is up and unhappy; "timed out" only says it was
+   * slow. When one path gives a status and the other times out, the specific
+   * cause is the one worth showing.
+   */
+  const stub = stubFetch(async (url) => {
+    if (url.endsWith('/-/ping')) throw timeoutError()
+    return new Response('down', { status: 503 })
+  })
   try {
     const result = await probeRegistry('https://registry.example.com/')
     assert.equal(result.ok, false)
     assert.equal(result.detail, 'HTTP 503')
+  } finally {
+    stub.restore()
+  }
+})
+
+test('a timeout says so, in milliseconds', async () => {
+  /*
+   * `AbortSignal.timeout` rejects with the opaque message "The operation was
+   * aborted due to timeout". The probe knows its own deadline, so it says which
+   * one, rather than passing the DOM string through to the dialog.
+   */
+  const stub = stubFetch(async () => {
+    throw timeoutError()
+  })
+  try {
+    const result = await probeRegistry('https://slow.example.com/')
+    assert.equal(result.ok, false)
+    assert.equal(result.detail, `timed out after ${PROBE_TIMEOUT_MS} ms`)
   } finally {
     stub.restore()
   }
@@ -101,8 +162,11 @@ test('an empty address is refused without a request', async () => {
   }
 })
 
-test('the probe keeps the harness deadline', () => {
-  // Same budget the harness's own registry probe uses; a longer one would make
-  // the button feel stuck, a shorter one would call a slow mirror dead.
-  assert.equal(PROBE_TIMEOUT_MS, 1500)
+test('the probe deadline fits a slow mirror', () => {
+  /*
+   * 1500 ms was the harness's own number, but that probe races two addresses it
+   * already trusts to pick a default. This one is asked about an address the user
+   * typed, on a link that may be slow, and both paths share the deadline.
+   */
+  assert.equal(PROBE_TIMEOUT_MS, 5000)
 })

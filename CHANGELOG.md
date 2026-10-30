@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1 — 2026-10-30
+
+- **The source test no longer calls a working mirror unreachable.** The probe tried
+  `/-/ping` first and the registry root only if that failed, with 1500 ms for the whole
+  thing. `registry.npmmirror.com` answers `/-/ping` in 3 to 15 seconds on some networks
+  while its root answers in 0.3 s, so the mainland mirror — the mirror this feature exists
+  for — came back as "unreachable", and so did `registry.npmjs.org` on a slow link at
+  2.2 s. Both paths are now asked at the same time, the first 2xx wins, and
+  `PROBE_TIMEOUT_MS` is 5 s for the whole probe rather than per request.
+- **A failed test now says which failure it was.** A status line ("HTTP 503" — the host is
+  up and unhappy) is reported ahead of a timeout, and a timeout is reported as
+  `timed out after 5000 ms` instead of passing `AbortSignal.timeout`'s
+  `The operation was aborted due to timeout` straight into the dialog.
+
 ## 1.6.0 — 2026-10-30
 
 - **The install source is now a setting, not a file edit.** The Versions tab header
@@ -14,8 +28,7 @@
 - **The control opens a dialog that manages sources, not just picks one.** It lists
   every source the tab can use — the two built-in addresses, the ones `pluginManager`
   is configured with, and the ones the user added — and each row can be tested against
-  the host (`/-/ping`, falling back to the registry root, 1500 ms — the same endpoint
-  and deadline the harness's own registry probe uses) and switched to with one click,
+  the host (`/-/ping`, falling back to the registry root) and switched to with one click,
   so "is this mirror actually up" is answered in the place the user picks it instead of
   by a failed install.
 - **The built-in sources have no edit and no delete, by construction.** They are
