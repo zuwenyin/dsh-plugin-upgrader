@@ -22,6 +22,10 @@
   carries "this page has no install entry" and "a reload was stopped", and only one of the
   three is finished by restarting — so `restart-required` sets the flag and starting a new
   batch clears it.
+- **The two ways the wait can end badly say different things.** A pid that never changes
+  means the old process is still answering; a pid that *did* change but a page that cannot
+  reload onto the new host means another restart. Both used to print the first sentence,
+  which sent people looking for a process that was already gone.
 - **A raster icon ships with the package.** `assets/icon.svg` stays the npm `./icon`
   export and the source of truth; `assets/icon-180.png` is a 180 px render of that same
   artwork produced by `scripts/render-icon.py` (Pillow, 4× supersampling), for the
