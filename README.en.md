@@ -220,6 +220,88 @@ error:
 A restart interrupts the job in flight; the UI reports that as a failure rather than
 spinning forever.
 
+## Permissions, dependencies and external services
+
+This section states the capabilities the plugin actually uses, so a review or a bug
+report does not have to read the source to find out.
+
+### What it touches
+
+| Capability | Scope | Notes |
+| --- | --- | --- |
+| Files | **the profile directory only** | Reads and writes `package.json`, writes `package.json.upgrader-journal.json`, reads `package.json.lock`. No filesystem walking, nothing outside the profile |
+| Network (outbound) | the configured npm registry, the GitHub API | `GET` only, see below |
+| Commands | **none** | No `child_process`, no spawned processes; installs go through the host's `pluginManager` |
+| Credentials | **none** | No tokens, no `.npmrc` reads, no authentication. Private registries rely on pnpm's own configuration |
+
+The registry choice (`registry` / `customRegistries`) is written into the profile's
+`cordis.patch.yml` by the **host's settings service**, not by the plugin editing files:
+the plugin only calls `configForms.set()`.
+
+Three environment variables are read, all to *locate the profile directory*:
+`DSH_PROFILE_DIR`, `DSH_HOME` and `DSH_PROFILE`. When the desktop shell exports none of
+them, a working directory that parses as a profile is used instead. They are not
+secrets, but a bare `process.env` counts as one "credentials" signal in a static scan,
+so the real purpose is spelled out here.
+
+### External services
+
+| Target | Purpose | On failure |
+| --- | --- | --- |
+| `{configured npm registry}/{package}` | packument fetch, to list published versions (5 minute cache, 20 second timeout, at most 4 concurrent) | that row shows `versionError` and a retry entry; other rows are unaffected |
+| `https://registry.npmjs.org/{package}` | only when the configured registry is not the official one: an extra upstream check that reports a lagging mirror | an unreadable upstream means "no gap", never "everything is missing" |
+| `https://api.github.com/repos/{owner}/{repo}/tags?per_page=100` | tag list, to decide whether a version can link to `releases/tag/v…` (30 minute cache, 8 second timeout) | falls back to the `releases` list; never guesses a tag that 404s |
+| `{the address being tested}/-/ping` and its root | *Test* in the Registry dialog probes both **concurrently**, first 2xx wins (5 s budget for the whole probe) | reports the most specific reason: status code first, then timeout, then the raw network error |
+| the local DSH web server | the plugin's own four `/api/plugin-upgrader/*` routes | — |
+
+The default registry is whatever pnpm is configured with (usually `.npmrc`); the
+**Registry** button on the Versions tab switches to the official registry, mainland
+mirror, or a source you add yourself. **No telemetry** of any kind is sent.
+
+### Dependencies
+
+There are **no bundled runtime dependencies**. The single external module,
+`@deepseek-ai/schemastery` (used for the Config schema, `~3.18.5`), is declared in
+`peerDependencies` and supplied by the host: DSH desktop ships it as its own dependency
+and first-party packages such as `dsh-plugin-manager` depend on it too, so it always
+resolves inside a profile. The copy needed for building and testing lives in
+`devDependencies`.
+
+The remaining `devDependencies` (TypeScript, esbuild, `@types/*`, `@deepseek-ai/dsh-*`)
+are development-time only and are not part of the published tarball's runtime.
+
+### Failure bounds
+
+- **One batch at a time**: a second submission gets `409 busy`; the UI adopts the batch
+  that is running instead of reporting an error.
+- **A job heartbeats every 2 seconds** and is declared abandoned after 15 minutes of
+  no progress, so it cannot occupy the slot forever. A host restart interrupts the job
+  in flight and the UI reports that as a failure.
+- **Writer lock**: the manager's own budget is 120 seconds; a timeout is translated
+  into who holds the lock and whether a restart clears it.
+- **A failed upgrade**: the in-place path journals the dropped dependency before
+  removing it and restores it on failure; a killed process is repaired on the next
+  load. The plugin stays installed and keeps its enabled state.
+- **Unreachable registry, rate-limited GitHub, offline**: every one of them degrades to
+  "this one thing could not be read, here is why, retry", never to a silent "no new
+  version" or "no version history".
+
+### DSH compatibility
+
+Node.js `>=20` and DSH `>=0.2.1-rc.3 <0.3.0-0` (the `engines` field).
+`dsh.compatibility.dshReleases` records **only the releases actually exercised**:
+
+| DSH release | Status |
+| --- | --- |
+| `0.2.1-rc.5` | compatible |
+
+`0.2.1-rc.4` and `0.2.2-alpha.2` fall inside the `engines` range but were not each
+exercised, so they are **not** listed (an undeclared release reads as `unknown`). These
+are **source-side compatibility declarations**, not a substitute for per-operation
+acceptance. `dshOperations` (install / start / uninstall / rollback) follows the same
+rule: left out rather than filled with `passed` before there is a per-release run behind
+it.
+
 ## Project layout
 
 ```

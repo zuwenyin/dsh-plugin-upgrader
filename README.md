@@ -185,6 +185,74 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 
 主进程重启会让正在跑的 job 中断，界面会把这种情况显示为失败而不是永远转圈。
 
+## 权限、依赖与外部服务
+
+这一节把插件实际用到的能力写清楚，方便审核和排障时对照，而不是让人去读源码猜。
+
+### 读写什么
+
+| 能力 | 范围 | 说明 |
+| --- | --- | --- |
+| 文件 | **仅 profile 目录** | 读写 `package.json`、写 `package.json.upgrader-journal.json`、读 `package.json.lock`。不遍历文件系统，不碰 profile 以外的路径 |
+| 网络（出站） | 配置的 npm 源、GitHub API | 只发 `GET`，见下 |
+| 命令 | **无** | 不调用 `child_process`，不 spawn 任何进程；安装动作交给宿主的 `pluginManager` |
+| 凭据 | **无** | 不读 token，不读 `.npmrc`，不做任何认证。私有源依赖 pnpm 自己的配置 |
+
+安装源的选择（`registry` / `customRegistries`）由**宿主的设置服务**写进 profile 的
+`cordis.patch.yml`，不是插件自己改文件——插件只调 `configForms` 的 `set()`。
+
+宿主进程的环境变量只用了 `DSH_PROFILE_DIR` / `DSH_HOME` / `DSH_PROFILE` 三个来**定位 profile
+目录**（桌面壳不导出它们时，退回「当前工作目录看起来像不像一个 profile」）。它们不是密钥，但
+静态扫描器会把裸 `process.env` 记成一次「凭据」信号，这里说明清楚它的真实用途。
+
+### 外部服务
+
+| 目标 | 用途 | 失败时 |
+| --- | --- | --- |
+| `{配置的 npm 源}/{包名}` | 拉 packument，列出已发布版本（5 分钟缓存，20 秒超时，最多 4 个并发） | 该行显示 `versionError` 和「重试」，其它行不受影响 |
+| `https://registry.npmjs.org/{包名}` | 只当配置的不是官方源时，额外查一次上游，报告「镜像落后」 | 读不到就当作没有缺口 |
+| `https://api.github.com/repos/{owner}/{repo}/tags?per_page=100` | 取 tag 列表，判断某个版本号能不能链到 `releases/tag/v…`（30 分钟缓存，8 秒超时） | 退到 `releases` 列表页，绝不猜一个 404 的 tag |
+| `{被测试的地址}/-/ping` 与根地址 | 「注册表」对话框里点「测试」时，**并发**探测这两条，谁先 2xx 用谁（整次探测 5 秒预算） | 报最具体的原因：状态码优先，其次超时，最后网络错误原文 |
+| 本机 DSH Web 服务 | `/api/plugin-upgrader/*` 自己的四个路由 | — |
+
+默认源是 pnpm 自己配置的那个（通常是 `.npmrc` 里的），也可以在「版本」页的「注册表」按钮里
+换成官方源、大陆镜像或自己加的源。**没有任何遥测**，不向第三方发送使用数据。
+
+### 依赖
+
+运行时**没有自带依赖**。唯一的外部模块 `@deepseek-ai/schemastery`（Config schema 用，要求
+`~3.18.5`）声明在 `peerDependencies` 里，由宿主提供——DSH 桌面端把它作为自身依赖发布，
+`dsh-plugin-manager` 等第一方包也依赖它，所以 profile 里一定解析得到。构建和测试需要的那一份
+放在 `devDependencies`。
+
+`devDependencies` 其余各项（TypeScript、esbuild、`@types/*`、`@deepseek-ai/dsh-*`）只在开发和
+构建时使用，不会进入发布的 tarball 运行时。
+
+### 失败边界
+
+- **一次只跑一批**：第二个提交拿 `409 busy`，界面接管正在跑的那一批，不报错。
+- **job 心跳 2 秒**，15 分钟没进展判废，不会永久占位；主进程重启会中断正在跑的 job，
+  界面显示为失败而不是永远转圈。
+- **写入锁**：manager 自己的预算是 120 秒，超时会把锁的状态翻成人话（谁持有、要不要重启）。
+- **升级失败**：in-place 替换会先把被摘掉的依赖记进 journal，失败就还原；进程被杀掉时，
+  下次加载会把依赖补回去。失败了插件仍在、启用状态仍在。
+- **registry 读不到 / GitHub 限流 / 离线**：都降级成「这一项读不到 + 原因 + 重试入口」，
+  不会伪装成「没有新版本」「没有历史版本」。
+
+### DSH 兼容性
+
+要求 Node.js `>=20`，DSH `>=0.2.1-rc.3 <0.3.0-0`（`package.json` 的 `engines`）。
+`dsh.compatibility.dshReleases` 只记录**真的跑过**的版本：
+
+| DSH 版本 | 状态 |
+| --- | --- |
+| `0.2.1-rc.5` | compatible |
+
+`0.2.1-rc.4` 和 `0.2.2-alpha.2` 虽然落在 `engines` 范围内，但没有逐一实测过，所以**不写进去**
+（未声明的版本按 `unknown` 处理）。这是**来源侧的兼容声明**，不代替逐项的操作验收；
+`dshOperations`（install / start / uninstall / rollback）同理，没有逐版本的实测记录就留空，
+不写 `passed`。
+
 ## 项目结构
 
 ```

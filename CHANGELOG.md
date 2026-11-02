@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.6.2 — 2026-11-02
+
+- **A DSH Store notice was re-checked against the current code, not taken at face value.**
+  Issue #1550 listed eight reasons, but they were a scan of v1.0.1: four of them (the three
+  missing runtime artifacts and the incomplete scan) and `prepare`/`engines.dsh` were all
+  fixed in 1.5.0. Re-running the store's own review code against the current tree leaves
+  one catalog reason this release could act on — the runtime dependency — and three
+  capability signals (`files`, `network`, `credentials`) that are the plugin's actual job.
+  Those three sit on the store's review list rather than its reject list, so they need a
+  maintainer admission record, not a code change; rewriting the plugin to stop touching
+  files, the network or the environment would be removing the feature.
+- **`@deepseek-ai/schemastery` is a peer dependency, not a bundled one.** 1.6.0 declared it
+  as a dependency so the `Config` schema would be built by the same library the loader
+  validates with — but that argument points at a peer, not at a copy: a peer guarantees one
+  instance, while a bundled copy can produce two. The host already ships it (`DSH desktop`
+  depends on it directly and `dsh-plugin-manager` does too), so the package no longer pulls
+  its own. It stays in `devDependencies` for building and testing.
+- **The package now declares per-release DSH compatibility.** `dsh.compatibility.dshReleases`
+  records `0.2.1-rc.5` as `compatible` — the release this plugin actually runs on. The two
+  other releases in the rolling window (`0.2.1-rc.4`, `0.2.2-alpha.2`) are inside the
+  `engines.dsh` range but were never exercised here, so they are deliberately left
+  undeclared and read as `unknown`. `dshOperations` is left out for the same reason rather
+  than filled with `passed`. This is Catalog metadata only; the host does not read it.
+- **README gains a permissions / dependencies / external services / failure-bounds section**
+  in both languages, so a review does not have to infer the blast radius from the source.
+
 ## 1.6.1 — 2026-10-30
 
 - **The source test no longer calls a working mirror unreachable.** The probe tried

@@ -380,6 +380,54 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
 
 ---
 
+## 15. 能力声明要如实写，但不能为了讨好扫描器去改代码
+
+**不可退化。** DSH Store 的自动审核（`bounded-source-v3`）把四个能力信号当成阻断项：
+`runtime source contains the (files|network|commands|credentials) permission signal`。
+它们由源码里的**字符串与语法**判定，不看意图：
+
+- `files`：`node:fs` 的导入，或 `readFile`/`writeFile`/`rename`/`rm` 之类的调用
+- `network`：`node:http`/`node:https` 的导入（**纯类型导入也算**）、`fetch(`、`WebSocket(`
+- `credentials`：任何不在白名单里的 `process.env` 形式。白名单只有 `DSH_HOME` `HOME`
+  `USERPROFILE` `PATH` `NODE_ENV` `LANG` 六个，而且必须是点号直取——
+  `process.env["DSH_HOME"]` 和 `process.env.DSH_PROFILE_DIR` 都会命中
+- `commands`：`child_process`，或 `spawn(`/`exec(` 之类的调用。本仓库**没有**这一项
+
+这个插件是插件生命周期管理器，读写 profile、访问 registry 是它的功能本体。所以：
+
+- **不要为了消掉信号去改功能。** 把 `process.env` 换成参数传递、把 `fetch` 藏进间接层，
+  信号只是挪走、能力一点没少，等于用可读性换一个假绿——DSH Store 自己的整改文案也写着
+  「do not rewrite plugin functionality to satisfy the scanner」。
+- **能如实消掉的那一条要消掉。** 唯一的例外是运行时依赖：`allowRuntimeDependencies`
+  为 false，任何 `dependencies` 都会触发 supply-chain 审阅。既然宿主已经提供
+  `@deepseek-ai/schemastery`，就该声明成 `peerDependencies` 而不是自带一份。
+- **能力要写进 README。** 中文 `README.md` 和英文 `README.en.md` 的
+  「权限、依赖与外部服务」/「Permissions, dependencies and external services」两节必须
+  与实际代码一致；新增一个外部端点、新增一次文件写入，都要同步改那里。
+
+**关于 `@deepseek-ai/schemastery` 为什么是 peer 而不是 dependency：**
+1.6.0 曾把它声明成 `dependencies`，理由是「`Config` schema 必须由 loader 校验用的同一个库
+构建」。这条理由**恰恰指向 peer**：peer 保证 loader 与插件指向同一份实例，而自带一份
+反而会造出两个 schemastery。桌面端把它作为自身依赖发布，`dsh-plugin-manager` 等第一方包也
+依赖它，profile 是 hoisted 布局，所以它一定在顶层。代价是：**缺 peer 不会让安装失败**，
+只会在运行时 import 失败——所以 `devDependencies` 里必须保留一份，测试和构建才跑得起来。
+
+**关于 `dsh.compatibility`：** 它是给 Catalog 读的元数据，宿主侧**完全不读**
+（`app.asar` 里 `dsh.compatibility` 零命中），所以加它零运行时风险，不需要升 SemVer。
+`dshReleases` 的键是**完整 SemVer**（`0.2.1-rc.5` 这种），值只能是
+`compatible`/`incompatible`/`unknown`，且必须与 `engines.dsh` 的范围一致——声明
+`compatible` 而 `engines` 覆盖不到时，校验会把它降回 `unknown`。
+**只写真的跑过的版本。** 目前只有 `0.2.1-rc.5`；`0.2.1-rc.4` 和 `0.2.2-alpha.2` 落在
+`engines` 范围内但没有逐一实测，所以留空（未声明 = `unknown`）。补一条 `compatible`
+的前置条件是**在那一版上真的装起来用过**，不是「范围覆盖了所以应该也行」。
+**`dshOperations` 不要提前填 `passed`**：`install`/`start`/`uninstall`/`rollback` 四项需要
+逐版本的真实运行证据，没有证据就整体省略（会被补成 `unknown`），而不是编一个。
+
+**代码：** `package.json` 的 `engines`、`peerDependencies`、`dsh.compatibility`；
+`README.md` 与 `README.en.md` 的披露章节。
+
+---
+
 ## 改完必须做的事
 
 ```bash

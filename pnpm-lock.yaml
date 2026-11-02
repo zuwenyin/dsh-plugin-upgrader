@@ -7,10 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@deepseek-ai/schemastery':
-        specifier: ~3.18.5
-        version: 3.18.5
     devDependencies:
       '@deepseek-ai/dsh-client-locale':
         specifier: ^0.2.1-rc.2
@@ -27,6 +23,9 @@ importers:
       '@deepseek-ai/dsh-plugin-manager':
         specifier: ^0.2.1-rc.2
         version: 0.2.1-rc.2(71eef451d406392c51810aac4ff7a513)
+      '@deepseek-ai/schemastery':
+        specifier: ~3.18.5
+        version: 3.18.5
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.5
