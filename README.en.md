@@ -38,6 +38,12 @@ English · [中文](./README.md)
   built-in sources, the ones `pluginManager` is configured with, and the ones you added.
   Built-ins cannot be edited or deleted; your own can. Every row can be tested on its
   own, and so can the source currently in use.
+- **It tells you how to restart when a restart is needed** — when a result comes back
+  `restart-required`, the banner grows a "Restart DSH" button. It explains why this
+  particular change has to wait and gives the one action that actually finishes the
+  restart for the way you started the host: quit and reopen the desktop app, or paste
+  back the command a terminal start used. After you confirm, it watches the host's pid
+  and reloads only once a different process answers, instead of leaving you guessing.
 
 ![Source manager](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/sources.png)
 
@@ -113,6 +119,7 @@ host half:
 | `POST /api/plugin-upgrader/job` | queue a batch of upgrade / switch steps, return a job id immediately |
 | `GET /api/plugin-upgrader/job?id=…` | poll progress, current phase, elapsed time, per-plugin results and the live log |
 | `POST /api/plugin-upgrader/cancel` | abort the step in flight, whichever install is running |
+| `GET /api/plugin-upgrader/host` | this process's pid and how it was started, for the "restart DSH" dialog |
 
 Every route is loopback-only: a batch installs packages, so a paired remote device
 or a cross-site page must never reach it.
@@ -252,7 +259,7 @@ so the real purpose is spelled out here.
 | `https://registry.npmjs.org/{package}` | only when the configured registry is not the official one: an extra upstream check that reports a lagging mirror | an unreadable upstream means "no gap", never "everything is missing" |
 | `https://api.github.com/repos/{owner}/{repo}/tags?per_page=100` | tag list, to decide whether a version can link to `releases/tag/v…` (30 minute cache, 8 second timeout) | falls back to the `releases` list; never guesses a tag that 404s |
 | `{the address being tested}/-/ping` and its root | *Test* in the Registry dialog probes both **concurrently**, first 2xx wins (5 s budget for the whole probe) | reports the most specific reason: status code first, then timeout, then the raw network error |
-| the local DSH web server | the plugin's own four `/api/plugin-upgrader/*` routes | — |
+| the local DSH web server | the plugin's own five `/api/plugin-upgrader/*` routes | — |
 
 The default registry is whatever pnpm is configured with (usually `.npmrc`); the
 **Registry** button on the Versions tab switches to the official registry, mainland

@@ -138,6 +138,8 @@ export const CSS = `
 .dsh-pu-banner.is-warn { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-primary); }
 .dsh-pu-banner.is-err { border-color: var(--dsw-alias-state-error-primary); color: var(--dsw-alias-state-error-primary); }
 .dsh-pu-foot { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--dsw-alias-label-tertiary); flex-wrap: wrap; }
+.dsh-pu-cmdbox { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.dsh-pu-cmd { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: all; }
 .dsh-pu-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--dsw-alias-border-l2); border-top-color: var(--dsw-alias-brand-primary); animation: dsh-pu-spin .8s linear infinite; flex: none; }
 @keyframes dsh-pu-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .dsh-pu-spin { animation-duration: 2.4s; } .dsh-pu-bar-inner.is-busy { animation-duration: 3s; } }

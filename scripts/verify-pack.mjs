@@ -138,6 +138,13 @@ const REQUIRED = [
   'lib/host/registry.js',
   'cordis.patch.yml',
   'assets/icon.svg',
+  /*
+   * The raster icon is the one marketplaces are allowed to show, and it is
+   * referenced from outside this pack (the listing yml points at the file on
+   * GitHub), so a tarball that quietly lost it would look fine here and break
+   * the listing there. `assets/icon.svg` is still the npm `./icon` export.
+   */
+  'assets/icon-180.png',
   'package.json',
   'README.md',
   'LICENSE',

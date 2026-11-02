@@ -28,6 +28,10 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 - **安装源管理** —— 「注册表」按钮打开一个对话框，里面列出自带源、`pluginManager` 配的源
   和用户自己加的源；自带源不能改也不能删，自己加的可以随时改/删。每一行都能单独
   「测试」能不能连上，当前在用的那个也能一键测。
+- **要重启时告诉你怎么重启** —— 升级结果里带 `restart-required` 时，提示条上多出一个
+  「重启 DSH」按钮，点开说明为什么这次改动要等，并按你的启动方式给出那一条能完成重启的
+  操作：桌面版是「退出应用再打开」，命令行启动的是可复制的原命令。确认重启后它会盯着
+  宿主的 pid，换了进程才刷新页面，而不是让你对着一个不确定的页面猜。
 
 ![安装源管理](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/sources.png)
 
@@ -95,6 +99,7 @@ dsh plugin --profile web add "$PWD"
 | `POST /api/plugin-upgrader/job` | 提交一批升级 / 切换步骤，立即返回 job id |
 | `GET /api/plugin-upgrader/job?id=…` | 轮询进度、当前阶段、已用时、逐项结果与实时日志 |
 | `POST /api/plugin-upgrader/cancel` | 中断当前步骤（任何一次安装，包括退回老路径后的重试） |
+| `GET /api/plugin-upgrader/host` | 本进程的 pid 与启动方式，供「重启 DSH」对话框说明怎么重启 |
 
 所有路由仅限本机回环访问：批量操作会安装软件包，配对设备或跨站页面一律拒绝。
 
@@ -213,7 +218,7 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 | `https://registry.npmjs.org/{包名}` | 只当配置的不是官方源时，额外查一次上游，报告「镜像落后」 | 读不到就当作没有缺口 |
 | `https://api.github.com/repos/{owner}/{repo}/tags?per_page=100` | 取 tag 列表，判断某个版本号能不能链到 `releases/tag/v…`（30 分钟缓存，8 秒超时） | 退到 `releases` 列表页，绝不猜一个 404 的 tag |
 | `{被测试的地址}/-/ping` 与根地址 | 「注册表」对话框里点「测试」时，**并发**探测这两条，谁先 2xx 用谁（整次探测 5 秒预算） | 报最具体的原因：状态码优先，其次超时，最后网络错误原文 |
-| 本机 DSH Web 服务 | `/api/plugin-upgrader/*` 自己的四个路由 | — |
+| 本机 DSH Web 服务 | `/api/plugin-upgrader/*` 自己的五个路由 | — |
 
 默认源是 pnpm 自己配置的那个（通常是 `.npmrc` 里的），也可以在「版本」页的「注册表」按钮里
 换成官方源、大陆镜像或自己加的源。**没有任何遥测**，不向第三方发送使用数据。

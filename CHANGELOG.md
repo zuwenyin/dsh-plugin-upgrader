@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.6.3 — 2026-11-02
+
+- **"Restart DSH" is now a thing the page can walk you through, instead of advice it
+  cannot follow up on.** A step the manager answers with `restart-required` used to leave a
+  banner saying a restart was needed and nothing else. The banner now grows a button that
+  opens a dialog naming the one action that actually finishes the restart for *this* host:
+  quit and reopen the desktop app, or paste back the command line a terminal start used
+  (read from the process itself, quoted so it is safe to paste). The dialog says plainly
+  that the page cannot restart the host — the desktop shell keeps relaunch in its main
+  process, and a terminal-started host has nobody to bring it back — rather than offering
+  a button that would reload the page and leave the change unapplied.
+- **It watches the pid, so you never have to guess whether the restart took.** After you
+  confirm, the dialog polls a new `GET /api/plugin-upgrader/host` route once a second until
+  a *different* pid answers, then reloads through the boot-document guard (the same one
+  1.3.0 added), so the reload lands on a document the new host can actually serve. Two
+  limits are deliberate: the pid is computed per request rather than cached, because a
+  cached value would make a real restart look like a hang, and the whole wait is capped at
+  two minutes before the dialog says the host has not come back.
+- **The button is tied to the result, not to the colour of the banner.** `warn` also
+  carries "this page has no install entry" and "a reload was stopped", and only one of the
+  three is finished by restarting — so `restart-required` sets the flag and starting a new
+  batch clears it.
+- **A raster icon ships with the package.** `assets/icon.svg` stays the npm `./icon`
+  export and the source of truth; `assets/icon-180.png` is a 180 px render of that same
+  artwork produced by `scripts/render-icon.py` (Pillow, 4× supersampling), for the
+  marketplaces that list plugins and only accept bitmap icons. Both files are in `files`,
+  and the pack check now fails if the PNG goes missing.
+- **`screenshots.json` lists the source-manager screenshot too.** It had been left at the
+  two original images when 1.6.0 added the dialog, so every market that reads the list
+  showed three features and two pictures.
+
 ## 1.6.2 — 2026-11-02
 
 - **A DSH Store notice was re-checked against the current code, not taken at face value.**

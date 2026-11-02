@@ -10,6 +10,7 @@
  *   GET  /api/plugin-upgrader/job?id=<id>   poll that batch
  *   POST /api/plugin-upgrader/cancel        stop the in-flight step
  *   POST /api/plugin-upgrader/registry/test is one registry reachable right now?
+ *   GET  /api/plugin-upgrader/host          this process's pid and how to restart it
  *
  * Every route is loopback-only: a batch installs packages, so a paired remote
  * device or a cross-site page must never reach it.
@@ -32,6 +33,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { savedRegistry, type UpgraderConfig } from './host/config.ts'
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
+import { buildHostInfo } from './host/hostinfo.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type StepOutcome } from './host/install.ts'
 import { profileDirFrom, recoverPendingDrop } from './host/manifest.ts'
@@ -470,6 +472,27 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
           }
         }
         writeJson(res, 200, { status: 'cancelling' })
+        return
+      }
+      if (req.method === 'GET' && route === 'host') {
+        /*
+         * The pid is answered fresh on every call, never cached: a page that
+         * polls this after telling the user to restart is comparing the pid it
+         * saw before against the one answering now, and a cached value would
+         * make a real restart look like a hang.
+         */
+        const startedAt = Date.now() - Math.round(process.uptime() * 1000)
+        writeJson(
+          res,
+          200,
+          buildHostInfo({
+            pid: process.pid,
+            startedAt,
+            execPath: process.execPath,
+            argv: process.argv,
+            profileDir: profileDirFrom() ?? null,
+          }),
+        )
         return
       }
       if (req.method === 'POST' && route === 'registry/test') {

@@ -27,6 +27,7 @@ import type {
 } from '../types.ts'
 import { JobPanel } from './JobPanel.ts'
 import { PluginRow } from './PluginRow.ts'
+import { RestartDialog } from './RestartDialog.ts'
 import { RegistrySourceButton } from './SourceDialog.ts'
 
 /**
@@ -77,6 +78,24 @@ export function Tab(props: TabProps): unknown {
   const [busyName, setBusyName] = React.useState<string | undefined>(undefined)
   const [cancelling, setCancelling] = React.useState(false)
   const [banner, setBanner] = React.useState<Banner | undefined>(undefined)
+  /**
+   * Whether the restart dialog is open.
+   *
+   * Kept beside the banner rather than on it: `Banner` is the text of one
+   * message, and a flag that changes what the banner can *do* would make every
+   * other banner carry a field it has no use for.
+   */
+  const [restartOpen, setRestartOpen] = React.useState(false)
+  /**
+   * Whether a restart would finish what the banner is talking about.
+   *
+   * `warn` alone is not the answer: the same tone carries "no install entry on
+   * this page" and "a reload was stopped", and only one of those is finished by
+   * restarting DSH. So the fact is recorded when the result says
+   * `restart-required`, and cleared when the next batch starts — the button
+   * disappears the moment it stops being the right advice.
+   */
+  const [restartPending, setRestartPending] = React.useState(false)
   const alive = useAlive()
 
   /** Poll a job until it settles, then reload the overview. */
@@ -86,6 +105,13 @@ export function Tab(props: TabProps): unknown {
       if (!alive.current) return settled
       setBusyName(undefined)
       setCancelling(false)
+      /**
+       * Cleared before the branches rather than inside one: the previous batch
+       * may have left a restart pending, and every outcome below either raises
+       * the restart banner again (the `restart-required` branch) or talks about
+       * something a restart does not finish.
+       */
+      setRestartPending(false)
       reload(false)
       /**
        * Polling returns nothing when the tab unmounted *or* when the host
@@ -120,6 +146,7 @@ export function Tab(props: TabProps): unknown {
         })
       } else if (settled?.results?.some((result) => result.application === 'restart-required') === true) {
         setBanner({ tone: 'warn', text: t('restart') })
+        setRestartPending(true)
       } else if (replacedAppearance(settled?.results)) {
         /**
          * An appearance plugin was replaced, so the page is now wearing the
@@ -143,7 +170,14 @@ export function Tab(props: TabProps): unknown {
            */
           void reloadWhenBootDocumentFresh({
             onBlocked: () => {
-              if (alive.current) setBanner({ tone: 'warn', text: t('reloadBlocked') })
+              if (!alive.current) return
+              setBanner({ tone: 'warn', text: t('reloadBlocked') })
+              /**
+               * This banner is the other one a restart finishes: the host has
+               * already rotated past the document this page booted from, so no
+               * reload can work and only a new host can hand out a live one.
+               */
+              setRestartPending(true)
             },
           })
         }, APPEARANCE_RELOAD_DELAY_MS)
@@ -174,6 +208,7 @@ export function Tab(props: TabProps): unknown {
     async (steps: StepRecord[], label: string): Promise<void> => {
       if (steps.length === 0) return
       setBanner(undefined)
+      setRestartPending(false)
       setBusyName(label)
       /**
        * A placeholder for the round trip, not a result: `submitJob` resolves
@@ -276,6 +311,7 @@ export function Tab(props: TabProps): unknown {
         return
       }
       setBanner(undefined)
+      setRestartPending(false)
       install({ spec: `${row.name}@${version}`, title: row.title, version })
     },
     [props.install, t],
@@ -397,12 +433,32 @@ export function Tab(props: TabProps): unknown {
           },
           h('span', null, banner.text),
           banner.tone === 'warn' ? h('span', null, t('restartHint')) : null,
+          /**
+           * The restart button belongs to the restart banner only. A `warn`
+           * banner is also raised for "the reload was stopped" and for "this
+           * page has no install entry", and offering a restart for those would
+           * be advice that does not apply — so the flag set by the result
+           * decides, not the tone.
+           */
+          restartPending
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-pu-btn is-tiny',
+                  onClick: () => setRestartOpen(true),
+                },
+                t('restartOpen'),
+              )
+            : null,
           h(
             'button',
             { type: 'button', className: 'dsh-pu-btn is-ghost is-tiny', onClick: () => setBanner(undefined) },
             '✕',
           ),
         ),
+
+    restartOpen ? h(RestartDialog, { t, onClose: () => setRestartOpen(false) }) : null,
 
     job === undefined ? null : h(JobPanel, { job, t, onCancel: cancel, cancelling }),
 

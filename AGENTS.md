@@ -428,6 +428,41 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
 
 ---
 
+## 16. 「需要重启」要给出一条能完成重启的路，而不是一句话
+
+**不可退化。** 1.6.3 之前，`restart-required` 只换来一句「需要重启 DSH 才会生效」，
+用户读完仍然不知道下一步做什么。页面**做不到**重启（桌面壳把 relaunch 放在主进程里，
+终端启动的宿主也没人替它拉起），但「做不到」不等于「只能沉默」。
+
+- 横幅上的「重启 DSH」按钮由**结果**决定：`application === 'restart-required'`
+  置 `restartPending`，开新批次时清掉。**不要改成看 `banner.tone === 'warn'`**——
+  同一个 `warn` 还兼着「这一页没有提供安装入口」和「刷新被拦住了」，只有其中一种
+  是重启能解决的（`Tab.ts:98` / `:443`）。
+- 对话框按 `kind` 分两种说法：`desktop` → 退出应用再打开；`cli` → 给出**当初那条命令行**，
+  含空白的参数已加引号，可原样粘贴。桌面版**故意不给命令**：把子进程的 argv 重放一遍
+  等于在同一个 profile 上再起第二个宿主（`hostinfo.ts:87`）。
+- `kind` 从 `process.argv[1]` 判断，不读环境变量：外壳拉起的入口是
+  `dsh-desktop-host/lib/index.js`，别的启动方式落不到那个路径
+  （`hostinfo.ts:44` `DESKTOP_ENTRY`、`:57` `hostKindOf`）。
+- **pid 是这条链路唯一有意义的信号**，而且**每次现算**（`src/index.ts:477` 用
+  `Date.now() - process.uptime()*1000`，不缓存）：缓存会让一次真的重启看起来像卡住。
+  页面每秒问一次，直到 pid 变了才往下走（`RestartDialog.ts:24` `PROBE_MS = 1000`）。
+- 确认重启之后的刷新**必须**走 `reloadWhenBootDocumentFresh`（§4），不要换成
+  `location.reload()`：新的宿主可能已经轮换到这一页加载不了的那一代 batch。
+- 等待**封顶两分钟**（`RestartDialog.ts:32` `WAIT_LIMIT_MS = 120_000`），超了说「宿主还没换新
+  进程」，而不是一直转圈。
+- **关掉对话框必须停掉轮询。** timer 放在 `timerRef` 里，unmount 时清掉
+  （`RestartDialog.ts:62`）：否则关掉之后它仍会继续问，并在你离开很久之后 reload 页面。
+- 文案里不许说页面能重启宿主（`copy.ts` 的 `restartBody` 中英都写明了做不到）。
+
+**代码：** `src/host/hostinfo.ts`、`src/index.ts:477`、`src/client/api.ts` `readHostInfo`、
+`src/client/components/RestartDialog.ts`、`src/client/components/Tab.ts:98`、`src/client/copy.ts`
+的 `restart*` 一组、`src/client/styles.ts` 的 `.dsh-pu-cmdbox` / `.dsh-pu-cmd`。
+
+**守护：** `test/hostinfo.test.ts`（10 条）、`test/copy.test.ts`（3 条）。
+
+---
+
 ## 改完必须做的事
 
 ```bash

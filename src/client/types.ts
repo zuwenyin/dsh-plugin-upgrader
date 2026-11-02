@@ -116,6 +116,20 @@ export interface Banner {
   text: string
 }
 
+/** Who owns this host's lifecycle, as far as the page can act on it. */
+export type HostKind = 'desktop' | 'cli'
+
+/** What the host answers about itself, for the restart dialog. */
+export interface HostInfo {
+  pid: number
+  startedAt: number
+  kind: HostKind
+  profileName: string | null
+  profileDir: string | null
+  /** A command line that starts this host again; empty when there is none. */
+  command: string
+}
+
 /** Best-effort translator: a locale binding, or the built-in copy. */
 export type T = (key: string, ...args: unknown[]) => string
 

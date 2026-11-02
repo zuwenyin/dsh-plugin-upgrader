@@ -9,7 +9,7 @@
  */
 import { getReact } from './env.ts'
 import { isRequestFailure, readJson, type RequestFailure } from './format.ts'
-import type { JobSnapshot, Overview, StepRecord } from './types.ts'
+import type { HostInfo, JobSnapshot, Overview, StepRecord } from './types.ts'
 
 /** Host route prefix registered by the host half. */
 export const API = '/api/plugin-upgrader'
@@ -196,6 +196,18 @@ export interface RegistryProbe {
   detail: string
   /** Round-trip time in milliseconds, when the request completed. */
   ms?: number
+}
+
+/**
+ * Read how this host was started, for the restart dialog.
+ *
+ * @returns the pid to watch and the instruction that finishes the restart.
+ * @throws a {@link RequestFailure} when the host is unreachable, which is its
+ *   own signal: the page only asks after telling the user to restart.
+ */
+export async function readHostInfo(): Promise<HostInfo> {
+  const response = await fetch(`${API}/host`, { credentials: 'same-origin' })
+  return readJson<HostInfo>(response)
 }
 
 /**

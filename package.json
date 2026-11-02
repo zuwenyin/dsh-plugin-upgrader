@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-upgrader",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "One-click upgrades, version history and rollback for plugins on the DeepSeek Harness Plugins page",
   "keywords": [
     "dsh",
@@ -39,6 +39,7 @@
     "lib/**/*.map",
     "locale/*.json",
     "assets/icon.svg",
+    "assets/icon-180.png",
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
