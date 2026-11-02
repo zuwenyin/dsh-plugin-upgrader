@@ -10,7 +10,7 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 
 [English](./README.en.md) · 中文
 
-![版本标签](./screenshots/history.png)
+![版本标签](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/history.png)
 
 ## 功能
 
@@ -29,7 +29,7 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
   和用户自己加的源；自带源不能改也不能删，自己加的可以随时改/删。每一行都能单独
   「测试」能不能连上，当前在用的那个也能一键测。
 
-![安装源管理](./screenshots/sources.png)
+![安装源管理](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/sources.png)
 
 > **要改这个仓库？先读 [AGENTS.md](./AGENTS.md)。** 那里逐条写了「已经实现并且必须继续成立」
 > 的行为、对应代码位置和守护它的测试。上面这些功能里，`GH` 链接和 in-place 升级都曾经
@@ -37,7 +37,8 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 
 ## 界面位置
 
-插件页顶部标签栏多出一个「版本」标签，与「已安装」「发现」并列：
+插件页顶部标签栏多出一个「版本」标签，与「已安装」以及市场标签并列
+（市场标签在装了 `dshmarket` 的界面里叫「插件市场」，DSH 自带的那个叫「发现」）：
 
 - 顶部统计：可升级数量 / 已安装数量 / 每个插件的版本数
 - 顶部「注册表」按钮打开安装源对话框：
@@ -59,11 +60,12 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
   - 该版本没打 tag，或 GitHub 列表读不到（限流 / 离线）→ 退回仓库的发布列表 `releases`，
     不在页面上放一个点进去是 404 的版本号
 
-![展开历史版本](./screenshots/selection.png)
+![展开历史版本](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
 
 ## 安装
 
-在「插件」页的**发现**标签里搜索 `dsh-plugin-upgrader`，点安装即可。
+在「插件」页的市场标签里搜索 `dsh-plugin-upgrader`（自带的是「发现」，
+装了 `dshmarket` 的界面里叫「插件市场」），点安装即可。
 桌面版请用它自带的插件管理界面安装，命令行改动不了正在运行的桌面 profile。
 
 用 `dsh` 命令行（把 `web` 换成你自己的 profile 名）：

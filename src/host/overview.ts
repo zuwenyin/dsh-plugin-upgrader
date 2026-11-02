@@ -1,8 +1,8 @@
 /**
  * The overview payload the Versions tab renders.
  *
- * One request answers everything the tab needs 鈥?installed bundles, their
- * published versions, which of them are upgradable 鈥?because a per-bundle
+ * One request answers everything the tab needs — installed bundles, their
+ * published versions, which of them are upgradable — because a per-bundle
  * request would turn one page open into a dozen round trips.
  *
  * @module dsh-plugin-upgrader/lib/overview
@@ -32,7 +32,7 @@ const INLINE_ICON_LIMIT = 2048
  * The first version of this used `Promise.all`, which fired every package
  * lookup at the mirror simultaneously. Eleven concurrent connections to
  * `registry.npmmirror.com` timed out, while the same eleven asked one at a time
- * answered in under 1.2 s 鈥?and each timeout rendered as a plugin with no
+ * answered in under 1.2 s — and each timeout rendered as a plugin with no
  * version history. The cap is what keeps one page load from becoming a burst.
  *
  * @param items - the work items.

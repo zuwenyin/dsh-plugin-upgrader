@@ -12,7 +12,7 @@ plugin adds a **Versions** tab to that page and fills both gaps.
 
 English · [中文](./README.md)
 
-![Versions tab](./screenshots/history.png)
+![Versions tab](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/history.png)
 
 ## Features
 
@@ -39,7 +39,7 @@ English · [中文](./README.md)
   Built-ins cannot be edited or deleted; your own can. Every row can be tested on its
   own, and so can the source currently in use.
 
-![Source manager](./screenshots/sources.png)
+![Source manager](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/sources.png)
 
 > **Changing this repo? Read [AGENTS.md](./AGENTS.md) first.** It lists the behaviour
 > that already works and must keep working, with the code location and the test that
@@ -48,7 +48,9 @@ English · [中文](./README.md)
 
 ## Where it shows up
 
-A **Versions** tab appears next to *Installed* and *Discover* on the Plugins page:
+A **Versions** tab appears next to *Installed* and the market tab on the Plugins
+page (that tab is **Market** with `dshmarket` installed, and **Discover** in DSH's
+own market page):
 
 - Header counts: upgradable / installed / version count
 - The header **Registry** control opens the source dialog:
@@ -74,11 +76,12 @@ A **Versions** tab appears next to *Installed* and *Discover* on the Plugins pag
   - the version was not tagged, or the GitHub list is unreadable (rate limit,
     offline) → the repository's `releases` feed
 
-![Expanded history](./screenshots/selection.png)
+![Expanded history](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
 
 ## Install
 
-Search `dsh-plugin-upgrader` on the Plugins page's **Discover** tab and hit install.
+Search `dsh-plugin-upgrader` on the Plugins page's market tab (**Discover** in DSH
+itself, **Market** with `dshmarket` installed) and hit install.
 On the desktop app use its own plugin manager — the CLI cannot change the profile
 an app has open.
 

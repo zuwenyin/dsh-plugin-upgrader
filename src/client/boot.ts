@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Whether this page may reload itself without losing the plugin bundles.
  *
  * The desktop shell builds the page it serves from an injection table it takes
@@ -8,7 +8,7 @@
  * the current revision and for exactly one previous one, so a document built
  * from a table older than that asks for URLs the Host answers with a bare 404.
  * Every entry in such a batch then fails to load, and the shell reports the
- * whole boot as failed 鈥?the dialog that greets a restart after a batch update.
+ * whole boot as failed — the dialog that greets a restart after a batch update.
  *
  * Nothing in a plugin can rebuild the table, but a plugin CAN refuse to walk
  * into the trap: before a reload it checks that the document it is about to
@@ -73,8 +73,8 @@ export function bootBatches(wire: unknown): BootBatch[] {
  *
  * A `HEAD` costs a header round-trip and the Host answers it from the same
  * table a `GET` would use, which is enough to tell "this revision is still
- * here" from "this revision is gone". Any other answer 鈥?a refused socket, a
- * 500 鈥?proves nothing either way, and a page that refuses to reload on an
+ * here" from "this revision is gone". Any other answer — a refused socket, a
+ * 500 — proves nothing either way, and a page that refuses to reload on an
  * unclear answer would look hung; only a definite 404 blocks the reload.
  *
  * @param options - the manifest to read, and the look-up to run.
@@ -116,7 +116,7 @@ export async function checkBootDocument(options: {
  * Reload the page only when the document it would reload is still intact.
  *
  * Called after a plugin was replaced, because its stylesheet left `<head>` with
- * the code that injected it. The reload restores the look 鈥?unless the boot
+ * the code that injected it. The reload restores the look — unless the boot
  * document has already outlived the Host's batch table, in which case the
  * reload is exactly what turns an upgrade into the startup-failure dialog.
  *
