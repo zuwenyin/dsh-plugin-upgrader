@@ -34,6 +34,25 @@ const WAIT_LIMIT_MS = 120_000
 /** What the dialog is doing. */
 type Phase = 'loading' | 'ready' | 'failed' | 'waiting' | 'stalled'
 
+/**
+ * What a stalled wait should say.
+ *
+ * Both dead ends land in `stalled` and they are not the same advice: the pid
+ * never changed (restart again), or it did but the page could not reload onto
+ * the new host (`problem` says so, and only another restart helps). Telling
+ * someone whose host *did* restart that it "has not been replaced yet" sends
+ * them to check a process that no longer exists.
+ *
+ * Extracted so the rule can be tested without rendering the dialog.
+ *
+ * @param problem - the message set by the caller, empty when there is none.
+ * @param t - the translator.
+ * @returns the sentence to show.
+ */
+export function stalledMessage(problem: string, t: T): string {
+  return problem.trim() === '' ? t('restartStillOld') : problem
+}
+
 /** Props for {@link RestartDialog}. */
 export interface RestartDialogProps {
   t: T
@@ -99,6 +118,7 @@ export function RestartDialog(props: RestartDialogProps): unknown {
   const waitForRestart = React.useCallback(() => {
     const before = host?.pid
     if (before === undefined) return
+    setProblem('')
     setPhase('waiting')
     const startedAt = Date.now()
     const timer = window.setInterval(() => {
@@ -213,7 +233,7 @@ export function RestartDialog(props: RestartDialogProps): unknown {
         : h('p', { className: 'dsh-pu-hint' }, t('restartPid', host.pid, host.profileName ?? '—')),
 
       phase === 'waiting' ? h('p', { className: 'dsh-pu-hint' }, t('restartWaiting')) : null,
-      phase === 'stalled' ? h('p', { className: 'dsh-pu-hint' }, t('restartStillOld')) : null,
+      phase === 'stalled' ? h('p', { className: 'dsh-pu-hint' }, stalledMessage(problem, t)) : null,
 
       h(
         'div',

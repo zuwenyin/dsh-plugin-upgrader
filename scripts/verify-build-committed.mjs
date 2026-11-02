@@ -1,7 +1,7 @@
 /**
  * Fail when the committed `lib/` is not what `src/` currently builds.
  *
- * `lib/` is committed on purpose (AGENTS.md §12): the DSH Store reviews a fixed
+ * `lib/` is committed on purpose (AGENTS.md §13): the DSH Store reviews a fixed
  * commit and refuses to run `prepare` to fill in missing runtime files, so the
  * build output has to be in the tree. The cost of that decision is exactly one
  * new way to break a release — edit `src/`, forget to rebuild, and the published
@@ -67,7 +67,7 @@ if (dirty.length > 0) {
   console.error('lib/ on disk is not what would be committed:')
   for (const line of dirty) console.error(`  ${line}`)
   console.error('')
-  console.error('lib/ is committed (AGENTS.md §12). Run `pnpm run build`, then `git add lib/`,')
+  console.error('lib/ is committed (AGENTS.md §13). Run `pnpm run build`, then `git add lib/`,')
   console.error('and commit it together with the sources that produced it.')
   process.exit(1)
 }

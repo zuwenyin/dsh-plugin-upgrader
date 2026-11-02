@@ -453,13 +453,20 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
   进程」，而不是一直转圈。
 - **关掉对话框必须停掉轮询。** timer 放在 `timerRef` 里，unmount 时清掉
   （`RestartDialog.ts:62`）：否则关掉之后它仍会继续问，并在你离开很久之后 reload 页面。
+- **「卡住了」有两种，不能合并成一句。** pid 没变（旧进程还在）和 pid 变了但页面刷不动
+  （`restartReloadBlocked`）都会落到 `stalled`，但前者叫人「再确认旧进程退出」，后者叫人
+  「再重启一次 DSH」。所以 `stalled` 渲染的是 `problem`（`RestartDialog.ts:224`），
+  只有 `problem` 为空才用 `restartStillOld`——把「宿主已重启」说成「还没换新进程」
+  会把人引到错误的方向。
 - 文案里不许说页面能重启宿主（`copy.ts` 的 `restartBody` 中英都写明了做不到）。
 
 **代码：** `src/host/hostinfo.ts`、`src/index.ts:477`、`src/client/api.ts` `readHostInfo`、
 `src/client/components/RestartDialog.ts`、`src/client/components/Tab.ts:98`、`src/client/copy.ts`
 的 `restart*` 一组、`src/client/styles.ts` 的 `.dsh-pu-cmdbox` / `.dsh-pu-cmd`。
 
-**守护：** `test/hostinfo.test.ts`（10 条）、`test/copy.test.ts`（3 条）。
+**守护：** `test/hostinfo.test.ts`（10 条）、`test/copy.test.ts`（3 条）、
+`test/restart-dialog.test.ts`（3 条：无理由时说「还没换新进程」、有理由时原样保留、
+只有空白也算没有理由）。
 
 ---
 
