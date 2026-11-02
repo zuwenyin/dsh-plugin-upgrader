@@ -46,6 +46,14 @@ test('an interpreter with no arguments is still a command', () => {
   assert.equal(relaunchCommand('/usr/bin/node', ['node'], 'cli'), '/usr/bin/node')
 })
 
+test('the interpreter is quoted when its own path has whitespace', () => {
+  // The no-argument branch builds the command from the interpreter alone, so it
+  // is the one place where quoting has to happen without any argv entry to carry
+  // it — and a default Windows install lives under "Program Files".
+  const command = relaunchCommand('C:\\Program Files\\nodejs\\node.exe', ['node'], 'cli')
+  assert.equal(command, '"C:\\Program Files\\nodejs\\node.exe"')
+})
+
 test('the answer carries the pid, which is what a polling page watches', () => {
   const info = buildHostInfo({
     pid: 15844,
