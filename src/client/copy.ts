@@ -83,6 +83,7 @@ export const ZH: Copy = {
   restartWaiting: '正在等宿主回来…',
   restartStillOld: '宿主还没换新进程。确认旧进程已经退出，再试一次。',
   restartReloadBlocked: '宿主已经重启，但这一页的插件清单过期了，直接刷新会启动失败。请再重启一次 DSH。',
+  restartReloadRefused: '宿主已经重启，但这一页没法自己刷新。手动刷新一下，或者重启 DSH 完成升级。',
   restartLoading: '正在读取宿主信息…',
   restartLoadFailed: (detail: string) => `读不到宿主信息：${detail}`,
   reloadForAppearance: '主题插件已更新，正在重新加载页面以恢复主题外观（主题配置保存在磁盘上，不会丢失）。',
@@ -219,6 +220,8 @@ export const EN: Copy = {
   restartStillOld: 'The host has not been replaced yet. Check that the old process exited, then try again.',
   restartReloadBlocked:
     'The host restarted, but this page\'s plugin list is out of date and reloading it would fail to start. Restart DSH once more.',
+  restartReloadRefused:
+    'The host restarted, but this page could not reload itself. Reload it by hand, or restart DSH to finish the upgrade.',
   restartLoading: 'Reading host information…',
   restartLoadFailed: (detail: string) => `Could not read host information: ${detail}`,
   reloadForAppearance: 'The theme plugin was updated; reloading the page to restore its look (its settings are on disk and are not lost).',

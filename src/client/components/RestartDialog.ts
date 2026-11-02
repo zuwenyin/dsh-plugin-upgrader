@@ -145,8 +145,17 @@ export function RestartDialog(props: RestartDialogProps): unknown {
               setPhase('stalled')
             },
           }).then((done) => {
-            // A page that cannot reload at all still needs to say so.
-            if (!done && !blocked) setPhase('stalled')
+            /**
+             * A page that cannot reload at all takes the same dead end as one
+             * that was stopped, but not the same advice: nothing here says the
+             * plugin list is out of date, only that this page cannot refresh
+             * itself. "It has not been replaced yet" would be wrong either way,
+             * because the host *did* restart.
+             */
+            if (!done && !blocked) {
+              setProblem(t('restartReloadRefused'))
+              setPhase('stalled')
+            }
           })
         })
         .catch(() => {
