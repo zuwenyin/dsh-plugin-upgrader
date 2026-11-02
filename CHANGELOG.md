@@ -26,6 +26,14 @@
   means the old process is still answering; a pid that *did* change but a page that cannot
   reload onto the new host means another restart. Both used to print the first sentence,
   which sent people looking for a process that was already gone.
+- **One unanswered poll no longer reports a healthy upgrade as lost.** Polling a batch used
+  to stop at the first failed request, and the tab reads "polling stopped" as "the host
+  restarted" — so an install that went on to succeed could still finish with a "lost
+  contact" banner. The host answers from the same thread that runs the install, so a
+  single poll timing out or coming back 5xx during pnpm is ordinary, not fatal. `fetch`
+  rejecting (a keep-alive socket closed under a long install) leaked out of the loop
+  entirely for the same reason. Polls now retry up to four times in a row, and a good poll
+  resets the count, so it takes ~3 s of real silence to give up.
 - **A raster icon ships with the package.** `assets/icon.svg` stays the npm `./icon`
   export and the source of truth; `assets/icon-180.png` is a 180 px render of that same
   artwork produced by `scripts/render-icon.py` (Pillow, 4× supersampling), for the

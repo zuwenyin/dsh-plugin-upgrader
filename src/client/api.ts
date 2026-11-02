@@ -100,7 +100,20 @@ export interface WatchOptions {
   isAlive: () => boolean
   /** Called with every snapshot. */
   onSnapshot: (snapshot: JobSnapshot) => void
+  /** Where to wait between polls; tests pass a no-wait version. */
+  delay?: ((ms: number) => Promise<void>) | undefined
 }
+
+/**
+ * How many polls in a row may fail before the tab gives up on the batch.
+ *
+ * A batch that installs spends minutes inside pnpm and the host answers from the
+ * same thread, so a single poll can time out or come back 5xx while the install
+ * is perfectly healthy. Treating the first miss as "the host restarted" is what
+ * once told users their upgrade was lost when it had in fact just finished. At
+ * an 800 ms poll, four misses is ~3 seconds of silence.
+ */
+export const WATCH_MISS_LIMIT = 4
 
 /**
  * Poll a job until it settles.
@@ -110,18 +123,37 @@ export interface WatchOptions {
  * @returns the settled snapshot, or undefined when polling stopped early.
  */
 export async function watchJob(id: string, options: WatchOptions): Promise<JobSnapshot | undefined> {
+  const wait = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  let missed = 0
   for (;;) {
     if (!options.isAlive()) return undefined
-    // eslint-disable-next-line no-await-in-loop
-    const response = await fetch(`${API}/job?id=${encodeURIComponent(id)}`, { credentials: 'same-origin' })
-    // eslint-disable-next-line no-await-in-loop
-    const snapshot = await readJson<JobSnapshot>(response).catch(() => undefined)
-    if (snapshot === undefined) return undefined
+    /**
+     * `fetch` itself can reject — the host is briefly unreachable while it
+     * restarts, and a keep-alive socket can be closed under a long install.
+     * That rejection used to escape the loop entirely, which is how a healthy
+     * batch became a "lost contact" banner.
+     */
+    const snapshot = await fetch(`${API}/job?id=${encodeURIComponent(id)}`, { credentials: 'same-origin' })
+      .then((response) => readJson<JobSnapshot>(response))
+      .catch(() => undefined)
+    if (snapshot === undefined) {
+      /**
+       * One failed poll is not the end of the batch. The job map lives in the
+       * host process, and the host is busy installing; asking again is cheap,
+       * while declaring the batch lost is not.
+       */
+      missed += 1
+      if (missed >= WATCH_MISS_LIMIT) return undefined
+      // eslint-disable-next-line no-await-in-loop
+      await wait(POLL_MS)
+      continue
+    }
+    missed = 0
     if (options.isAlive()) options.onSnapshot(snapshot)
     if (snapshot.status !== 'running' && snapshot.status !== 'queued') return snapshot
     // eslint-disable-next-line no-await-in-loop
-    await new Promise((resolve) => setTimeout(resolve, POLL_MS))
-    }
+    await wait(POLL_MS)
+  }
 }
 
 /**
