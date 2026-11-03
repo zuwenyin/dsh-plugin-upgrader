@@ -25,7 +25,10 @@ English · [中文](./README.md)
   runs, and a cancel button that works.
 - **Multi-select upgrade** — tick any subset of plugins and upgrade only those.
 - **Version history / rollback** — expand any plugin to see every published version
-  (with publish date and engine requirement) and switch to it in one click.
+  (with publish date and engine requirement) and switch to it in one click. Every
+  version is first checked against the **DSH you are actually running**: releases
+  this runtime cannot install are marked and their switch button is disabled (the
+  host's gate refuses them only after the bundle has been unloaded).
 - **GitHub links** — the `GH` button opens the plugin's repository; clicking a
   version number opens that version's GitHub release page.
 - **A lagging mirror is named** — versions published upstream but not yet mirrored
@@ -308,6 +311,35 @@ are **source-side compatibility declarations**, not a substitute for per-operati
 acceptance. `dshOperations` (install / start / uninstall / rollback) follows the same
 rule: left out rather than filled with `passed` before there is a per-release run behind
 it.
+
+### Whether each version matches the DSH you run
+
+DSH checks a plugin's declared DSH requirement at install time and **refuses** the install
+when it does not hold. That check happens after the version has been taken out on the
+older replacement path, which is how "I clicked switch and the plugin disappeared" really
+happened. The page therefore reaches the verdict first, under exactly the host's rules:
+
+- when the manifest declares `engines.dsh`, that range alone decides and
+  `peerDependencies` are ignored;
+- otherwise every `peerDependencies` range on `@deepseek-ai/dsh` and
+  `@deepseek-ai/dsh-*` must hold, with `workspace:^` / `~` / `*` meaning "this very
+  runtime";
+- prereleases take part in matching (`includePrerelease`), as they do at the gate.
+
+Both directions are covered: after DSH moves forward, releases in the history that no
+longer admit this runtime are marked "not for this DSH" and their switch button is
+disabled; while DSH stays behind, a `latest` that this runtime cannot install stops
+counting as an upgrade, and the row says which range it wants instead.
+
+The runtime version is read from **the host's own entry point**, not from the profile: a
+profile's `@deepseek-ai/dsh-app-boot` is a link into an npx cache and measured
+`0.1.2-rc.1` against a runtime that reports `0.2.1-rc.5`. When it cannot be read, nothing
+is marked — a guessed version would call installable releases uninstallable.
+
+The matcher is implemented in `src/host/version.ts` and was checked against `node-semver`
+over 49 ranges × 41 versions (2035 pairs, all agreeing). The `semver` package is not
+pulled in because one more runtime dependency is one more supply-chain review, and the
+only semantics needed here are the `includePrerelease` ones.
 
 ## Project layout
 

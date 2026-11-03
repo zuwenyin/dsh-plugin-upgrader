@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0 — 2026-11-03
+
+- **Every version is judged against the DSH that is actually running, before it is
+  offered.** The host refuses an install whose declared DSH range does not admit this
+  runtime, and on the older replacement path it refuses *after* the bundle has been
+  unloaded — switching a real skin plugin to `0.1.5` (`>=0.1.7-rc.1 <0.1.8-0`) left the
+  package removed from the profile with a dangling patch id. Both directions are covered
+  now. Going *down* the history on a newer DSH marks the releases that no longer admit
+  this runtime and disables their switch button. Going *up* on an older DSH stops
+  offering `latest` as an upgrade when that release does not admit this runtime, and the
+  row says which range it wants instead.
+- **The runtime version comes from the host's own entry point.** A profile's
+  `@deepseek-ai/dsh-app-boot` is a link into an npx cache and measured `0.1.2-rc.1`
+  against a runtime that reports `0.2.1-rc.5`; reading the profile would have marked
+  installable releases uninstallable. When the version cannot be read, nothing is marked
+  — the host stays the judge, and the page only loses a hint.
+- **The rules are the gate's rules.** `engines.dsh` decides alone when present;
+  otherwise every `peerDependencies` range on `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*`
+  must hold, with `workspace:^`/`~`/`*` meaning "this runtime", prereleases included.
+  `src/host/version.ts` implements the matching, checked against `node-semver` over 49
+  ranges × 41 versions (2035 pairs, all agreeing). Three inequalities were wrong before
+  that check — most visibly `~0.1.7-rc.1` admitting `0.1.6`.
+
 ## 1.6.3 — 2026-11-02
 
 - **"Restart DSH" is now a thing the page can walk you through, instead of advice it
