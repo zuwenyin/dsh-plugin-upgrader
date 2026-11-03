@@ -2,6 +2,10 @@
 
 [![npm](https://img.shields.io/npm/v/dsh-plugin-upgrader.svg)](https://www.npmjs.com/package/dsh-plugin-upgrader)
 [![license](https://img.shields.io/npm/l/dsh-plugin-upgrader.svg)](./LICENSE)
+[![dsh.so install verified](https://cdn.dsh.so/badge/install/dsh-plugin-upgrader@0.2.1-rc.5.svg)](https://www.dsh.so/artifact/dsh-plugin-upgrader/)
+[![dsh.so risk: low](https://cdn.dsh.so/badge/dsh-plugin-upgrader.svg)](https://www.dsh.so/artifact/dsh-plugin-upgrader/)
+[![DSH Market listed](https://raw.githubusercontent.com/2BingLing/dsh-market/master/assets/readme/badge-listed-en.svg)](https://dsh.market/)
+[![DeepSeek Harness Plugin](https://deepseekharnessplugins.com/api/badge/zuwenyin/dsh-plugin-upgrader)](https://deepseekharnessplugins.com/plugins/zuwenyin/dsh-plugin-upgrader)
 
 > One-click upgrades plus version history and rollback for the DeepSeek Harness
 > **Plugins** page.
