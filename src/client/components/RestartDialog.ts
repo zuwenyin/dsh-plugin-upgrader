@@ -359,7 +359,12 @@ export function RestartDialog(props: RestartDialogProps): unknown {
              */
             disabled: host === undefined || phase === 'waiting' || phase === 'loading',
           },
-          phase === 'waiting' ? t('restartWaiting') : t('restartRecheck'),
+          /**
+           * The label stays put while a wait runs: the hint line above already
+           * says what is happening, and a button that renames itself to the
+           * same sentence reads like the wait is the button's doing.
+           */
+          t('restartRecheck'),
         ),
         h(
           'button',
