@@ -509,9 +509,11 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
   `workspace:^` / `~` / `*` 视为「就是当前运行时」，预发布参与比较。
   改这里之前先对照宿主侧的 `plugin-compatibility`——页面说「可以」而宿主随后拒绝，
   比页面什么都不说更糟。
-- **运行时版本从宿主的入口读，不从 profile 读。** profile 里的
-  `@deepseek-ai/dsh-app-boot` 是指向 npx 缓存的 junction，实测 `0.1.2-rc.1`，而宿主真正报的
-  是 `0.2.1-rc.5`。用错版本会把**本来能装**的版本标成装不了。代码在 `src/host/runtime.ts`，
+- **运行时版本从宿主的入口读，不从固定路径读。** 桌面壳把入口放在 `app.asar` 里，那里读到的
+  是打包进去的 `0.2.1-rc.5`；命令行启动跑的是 profile 里的 `dsh/lib/bin.js`，那里读到的
+  是 profile 那份——而 profile 里的 `@deepseek-ai/dsh-app-boot` 是指向 npx 缓存的 junction，
+  实测 `0.1.2-rc.1`。两者在真实机器上确实不一样，**从入口走两边都对，写死路径会错一半**，
+  而「把本来能装的版本标成装不了」比不标更糟。代码在 `src/host/runtime.ts`，
   起点是 `process.argv` 里的宿主入口。
 - **读不到就什么都不标。** `compatible` 只有「读到范围且确实不满足」时才是 `false`，
   否则是 `undefined`（缺席）。不要改成读到就写 `true`/读不到就写 `false`：
@@ -531,7 +533,8 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
 （禁用切换按钮）、`src/client/components/PluginRow.ts`（`blocked` 提示）。
 
 **守护：** `test/compatibility.test.ts`（8 条，两条主用例就是上面那两个方向）、
-`test/version.test.ts`（14 条区间匹配）、`test/overview.test.ts`
+`test/runtime.test.ts`（4 条：从入口旁边的副本读、第二个入口也要试、读不到就返回空、
+空白版本号不算版本）、`test/version.test.ts`（14 条区间匹配）、`test/overview.test.ts`
 （`an upgrade the host would refuse is not offered as an upgrade` 等 3 条）。
 
 ---
