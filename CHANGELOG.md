@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.7.1 — 2026-11-03
+
+- **A failed upgrade no longer switches on a plugin that was switched off.** Swapping a
+  version unloads the bundle first, so a replacement that fails has to put the selection
+  back — and that repair only knew one answer: `restoreSelection` calls
+  `setBundleEnabled(name, true)` and nothing else. A step the user asked to keep disabled
+  (`enabled: false`) therefore ended with the plugin running, and the success path's
+  `restoreEnabledState(..., step.enabled)` never got the chance to correct it, because it
+  is skipped once the step has failed. The repair now asks what the step *wanted* rather
+  than what it found on disk: `restoreEnabledState(..., false)` leaves a plugin that is
+  already off alone and switches off one the manager still reports as loaded. A step that
+  carries no flag keeps the old answer — a failed replacement must not leave a plugin
+  unloaded — so older clients and scripts behave exactly as before. The in-place path was
+  never affected: it already restored through `options.enabled`.
+
 ## 1.7.0 — 2026-11-03
 
 - **Every version is judged against the DSH that is actually running, before it is
