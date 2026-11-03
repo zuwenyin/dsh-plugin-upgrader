@@ -19,6 +19,18 @@ export interface VersionRow {
   url?: string
   /** A fully resolvable address, when the host sent one. */
   href?: string
+  /**
+   * `false` when this release declares a DSH requirement the running host does
+   * not meet.
+   *
+   * Absent when the answer is unknown — a manifest that declares nothing, or a
+   * host whose own version could not be read. Only a range that was read and
+   * rejected the runtime sets `false`, so the tab never turns "unknown" into
+   * "unsupported".
+   */
+  compatible?: boolean
+  /** The declared DSH requirement behind {@link compatible}. */
+  requires?: string
 }
 
 /** One installed plugin, as the host reports it. */
@@ -48,6 +60,15 @@ export interface OverviewRow {
   /** Releases the upstream registry has that the configured mirror does not. */
   mirrorMissing?: string[]
   pendingBuilds?: string[]
+  /**
+   * The newest release refuses to run on this DSH version.
+   *
+   * The row's upgrade button targets `latest`, so an incompatible newest release
+   * has to stop being an upgrade — otherwise the click installs nothing and, on
+   * the older path, removes what was there. Present only when a requirement was
+   * read and did not admit this runtime.
+   */
+  blocked?: { version: string; requires: string }
 }
 
 /** The overview response body. */

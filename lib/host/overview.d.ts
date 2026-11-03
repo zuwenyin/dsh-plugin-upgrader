@@ -33,6 +33,18 @@ export interface OverviewRow {
      * like an up-to-date package.
      */
     mirrorMissing?: string[];
+    /**
+     * The DSH requirement of {@link latest}, when that release cannot run here.
+     *
+     * The upgrade button targets `latest`, so a newer release the host would
+     * refuse has to be visible as a refusal, not as an upgrade that fails halfway
+     * through. Set only when `latest` is newer than what is installed and its
+     * declared requirement excludes this runtime.
+     */
+    blocked?: {
+        version: string;
+        requires: string;
+    };
 }
 /** The whole overview response body. */
 export interface Overview {
@@ -57,6 +69,13 @@ export interface OverviewOptions {
     locale?: 'zh' | 'en';
     /** The registry saved in this plugin's config; empty follows pnpm. */
     registry?: string;
+    /**
+     * The DSH runtime version to judge versions against.
+     *
+     * Injected by the tests; the host call leaves it out and the version is read
+     * from the running process instead.
+     */
+    runtimeVersion?: string;
 }
 /**
  * Build the overview the tab renders.

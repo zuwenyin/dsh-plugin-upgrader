@@ -7,7 +7,7 @@
  *
  * @module dsh-plugin-upgrader/lib/registry
  */
-import { compareVersions, releasePathOf } from './version.ts'
+import { compareVersions, releasePathOf, satisfiesRange } from './version.ts'
 import { githubUrlOf, type PackumentLike, type RepoManifest } from './repo.ts'
 
 /** How long one registry packument stays fresh. */
@@ -70,6 +70,80 @@ export interface VersionManifest extends RepoManifest {
   deprecated?: unknown
   engines?: { dsh?: unknown } | undefined
   dsh?: { engines?: { dsh?: unknown } } | undefined
+  peerDependencies?: Record<string, unknown> | undefined
+}
+
+/**
+ * The DSH requirement one published version declares, and where it came from.
+ *
+ * The host refuses to install a plugin whose declaration does not admit the
+ * running runtime, so the page has to read the same declaration — from the same
+ * place, in the same order — before it offers the version.
+ */
+export interface DshRequirement {
+  /** The range as the manifest wrote it, e.g. `>=0.2.0-rc.2 <0.3.0-0`. */
+  range: string
+  /** Which field it came from; `engines` wins over `peerDependencies`. */
+  source: 'engines' | 'peers'
+  /** How many `@deepseek-ai/dsh*` peers had to match; 1 for an engine range. */
+  count: number
+}
+
+/** Peer names the host's compatibility gate treats as "the DSH runtime". */
+const DSH_PEER = '@deepseek-ai/dsh'
+const DSH_PEER_PREFIX = '@deepseek-ai/dsh-'
+
+/** Peer values that mean "the version this was built in", not a real range. */
+const WORKSPACE_PEERS = new Set(['workspace:^', 'workspace:~', 'workspace:*'])
+
+/**
+ * Read the DSH requirement out of one published manifest.
+ *
+ * This mirrors the host gate exactly: `engines.dsh` decides alone when present,
+ * and only otherwise do the `@deepseek-ai/dsh*` peer ranges matter. Reading them
+ * in the other order would mark versions usable that the host then refuses,
+ * which is the failure this whole path exists to prevent.
+ *
+ * @param manifest - one entry of a packument's `versions` map.
+ * @returns the requirement, or `undefined` when the manifest declares none.
+ */
+export function dshRequirementOf(manifest: VersionManifest | undefined): DshRequirement | undefined {
+  const engine = manifest?.engines?.dsh ?? manifest?.dsh?.engines?.dsh
+  if (typeof engine === 'string' && engine.trim() !== '') {
+    return { range: engine.trim(), source: 'engines', count: 1 }
+  }
+  const peers = manifest?.peerDependencies
+  if (peers === null || peers === undefined || typeof peers !== 'object') return undefined
+  const ranges: string[] = []
+  for (const [name, value] of Object.entries(peers)) {
+    if (name !== DSH_PEER && !name.startsWith(DSH_PEER_PREFIX)) continue
+    if (typeof value !== 'string') continue
+    const range = value.trim()
+    // A workspace peer names the build tree, not a release: the host reads it as
+    // "the running runtime", so it never excludes anything.
+    if (range === '' || WORKSPACE_PEERS.has(range)) continue
+    ranges.push(range)
+  }
+  if (ranges.length === 0) return undefined
+  return { range: ranges.join(' '), source: 'peers', count: ranges.length }
+}
+
+/**
+ * Does one published version admit a runtime version?
+ *
+ * @param manifest - the published manifest.
+ * @param runtimeVersion - the DSH build this process is running, when known.
+ * @returns `false` only when both sides are known and the range rejects the
+ * runtime; `undefined` when either side is missing.
+ */
+export function meetsDshRequirement(
+  manifest: VersionManifest | undefined,
+  runtimeVersion: string | undefined,
+): boolean | undefined {
+  const requirement = dshRequirementOf(manifest)
+  if (requirement === undefined) return undefined
+  if (runtimeVersion === undefined) return undefined
+  return satisfiesRange(runtimeVersion, requirement.range)
 }
 
 /** The packument fields this module reads beyond {@link PackumentLike}. */
@@ -128,6 +202,18 @@ export interface VersionRow {
    * a version as an ordinary upgrade sets the person up for exactly that.
    */
   unavailable?: string
+  /**
+   * `false` when this version's declared DSH requirement excludes the runtime
+   * this process is running.
+   *
+   * Absent — not `true` — when either side is unknown: a version whose manifest
+   * declares nothing, or a host whose own version could not be read, is not
+   * evidence of incompatibility. Only a range that was read and did not admit
+   * the runtime sets this to `false`.
+   */
+  compatible?: boolean
+  /** The DSH requirement behind {@link compatible}, for the tooltip. */
+  requires?: string
 }
 
 /** The packument slice the tab renders. */
@@ -544,6 +630,7 @@ export function shapePackument(
   packument: FullPackument | undefined,
   installedVersion: string | undefined,
   tagNames: ReadonlySet<string> | undefined,
+  runtimeVersion?: string | undefined,
 ): ShapedPackument {
   const versionsRecord = packument?.versions
   if (versionsRecord === null || versionsRecord === undefined || typeof versionsRecord !== 'object') {
@@ -563,6 +650,8 @@ export function shapePackument(
   const rows: VersionRow[] = names.map((version) => {
     const manifest = versionsRecord[version] ?? {}
     const engine = manifest?.engines?.dsh ?? manifest?.dsh?.engines?.dsh
+    const requirement = dshRequirementOf(manifest)
+    const compatible = meetsDshRequirement(manifest, runtimeVersion)
     return {
       version,
       time: typeof timeRecord[version] === 'string' ? (timeRecord[version] as string) : undefined,
@@ -571,6 +660,8 @@ export function shapePackument(
       current: version === installedVersion,
       latest: false,
       url: repoUrl === undefined ? undefined : releasePathOf(tagNames, version),
+      ...(compatible === false ? { compatible: false } : {}),
+      ...(requirement === undefined ? {} : { requires: requirement.range }),
     }
   })
   rows.sort((left, right) => compareVersions(right.version, left.version))

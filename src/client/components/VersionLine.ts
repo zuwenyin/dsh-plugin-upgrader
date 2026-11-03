@@ -35,9 +35,18 @@ export function VersionLine(props: VersionLineProps): unknown {
   /** A row without a tag of its own points at the repository's release feed. */
   const linkLabel = link !== undefined && /\/releases\/tag\//.test(link) ? t('githubVersion') : t('githubReleases')
   const title = link === undefined ? undefined : `${linkLabel} →${link}`
+  /*
+   * A version the host's compatibility gate would refuse stays visible — it is
+   * part of the published history and its absence would be misleading — but it
+   * is marked, and the switch button is disabled. The gate rejects the install
+   * after the manager has already begun replacing the bundle, so letting the
+   * click through is how a "switch to 0.1.5" used to leave the package removed.
+   */
+  const foreign = version.compatible === false
+  const why = foreign ? t('incompatibleWhy', version.requires ?? '') : title
   return h(
     'div',
-    { className: `dsh-pu-hist-row${version.current ? ' is-current' : ''}` },
+    { className: `dsh-pu-hist-row${version.current ? ' is-current' : ''}${foreign ? ' is-foreign' : ''}` },
     link !== undefined
       ? h(
           'button',
@@ -53,6 +62,7 @@ export function VersionLine(props: VersionLineProps): unknown {
     h('time', null, formatDate(version.time)),
     version.latest ? h('span', { className: 'dsh-pu-tag is-new' }, t('latest')) : null,
     version.current ? h('span', { className: 'dsh-pu-tag' }, t('current')) : null,
+    foreign ? h('span', { className: 'dsh-pu-tag is-foreign', title: why }, t('incompatible')) : null,
     h('span', { className: 'dsh-pu-note' }, note),
     link === undefined
       ? null
@@ -73,7 +83,8 @@ export function VersionLine(props: VersionLineProps): unknown {
       {
         type: 'button',
         className: 'dsh-pu-btn is-tiny',
-        disabled: busy || version.current === true,
+        disabled: busy || version.current === true || foreign,
+        title: why,
         onClick: () => onSwitch(row, version.version),
       },
       /*

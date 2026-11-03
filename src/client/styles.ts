@@ -104,6 +104,7 @@ export const CSS = `
 .dsh-pu-tag { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-weight: 500; white-space: nowrap; }
 .dsh-pu-tag.is-new { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); }
 .dsh-pu-tag.is-err { border-color: var(--dsw-alias-state-error-primary); color: var(--dsw-alias-state-error-primary); }
+.dsh-pu-tag.is-foreign { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-primary); }
 .dsh-pu-vers { display: flex; align-items: center; gap: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--dsw-alias-label-secondary); flex: none; }
 .dsh-pu-vers b { color: var(--dsw-alias-label-primary); font-weight: 600; }
 .dsh-pu-vers i { font-style: normal; color: var(--dsw-alias-label-tertiary); }
@@ -116,6 +117,7 @@ export const CSS = `
 .dsh-pu-hist-row { display: flex; align-items: center; gap: 10px; padding: 5px 6px; border-radius: 6px; font-size: 11px; }
 .dsh-pu-hist-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dsh-pu-hist-row.is-current { background: var(--dsw-alias-interactive-bg-hover); box-shadow: inset 2px 0 0 var(--dsw-alias-brand-primary); }
+.dsh-pu-hist-row.is-foreign .dsh-pu-mono, .dsh-pu-hist-row.is-foreign time { opacity: .6; }
 .dsh-pu-hist-row .dsh-pu-mono { flex: none; min-width: 108px; color: var(--dsw-alias-label-primary); }
 .dsh-pu-link { display: inline-flex; align-items: center; gap: 4px; border: 0; padding: 0; margin: 0; background: none; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--dsw-alias-link); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--dsw-alias-link) 40%, transparent); text-underline-offset: 2px; }
 .dsh-pu-link:hover { color: var(--dsw-alias-brand-primary); text-decoration-color: currentColor; }

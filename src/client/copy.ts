@@ -53,6 +53,12 @@ export const ZH: Copy = {
   noHistoryWhy: '这个包不是从 npm 注册表安装的，没有发布历史。',
   historyFailed: '版本列表读取失败，点「检查更新」可重试',
   mirrorBehind: '镜像源尚未同步这些已发布版本，装不了',
+  incompatible: '不支持当前 DSH',
+  incompatibleWhy: (range: string) => `这个版本要求 DSH ${range}，而当前宿主不满足。装上去会被宿主拒绝。`,
+  incompatibleLatest: (version: string, range: string) =>
+    `最新版 ${version} 要求 DSH ${range}，当前宿主不满足，所以不能升上去。可以先把 DSH 升到那个范围，或换一个兼容的版本。`,
+  runtimeUnknown: '读不到当前 DSH 版本，无法判断兼容性',
+  requiresDsh: (range: string) => `要求 DSH ${range}`,
   versions: (n: number) => `${n} 个版本`,
   showingNewest: (n: number) => `列出最新 ${n} 个`,
   progress: (done: number, total: number) => `正在处理 ${done}/${total}`,
@@ -188,6 +194,13 @@ export const EN: Copy = {
   noHistoryWhy: 'This package was not installed from an npm registry, so it has no published history.',
   historyFailed: 'Could not read the version list; "Check for updates" retries it',
   mirrorBehind: 'Your mirror has not synced these published versions yet, so they cannot be installed',
+  incompatible: 'Not for this DSH',
+  incompatibleWhy: (range: string) =>
+    `This version requires DSH ${range}, which this host does not satisfy. Installing it would be rejected.`,
+  incompatibleLatest: (version: string, range: string) =>
+    `The newest release ${version} requires DSH ${range}, which this host does not satisfy, so the upgrade is not offered. Upgrade DSH into that range, or pick a compatible version.`,
+  runtimeUnknown: 'Could not read the running DSH version, so compatibility cannot be judged',
+  requiresDsh: (range: string) => `requires DSH ${range}`,
   versions: (n: number) => `${n} versions`,
   showingNewest: (n: number) => `showing newest ${n}`,
   progress: (done: number, total: number) => `Working on ${done}/${total}`,

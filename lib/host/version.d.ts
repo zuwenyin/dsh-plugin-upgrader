@@ -1,9 +1,10 @@
 /**
- * Version ordering and release-link helpers.
+ * Version ordering, release-link helpers, and range matching.
  *
  * Everything here is pure: no I/O, no clock, no ambient state. The host half
- * uses it to sort published versions and to decide which GitHub page a version
- * line opens, and the test suite exercises it directly.
+ * uses it to sort published versions, to decide which GitHub page a version
+ * line opens, and to answer whether a published version is allowed on the
+ * runtime this profile is actually running.
  *
  * @module dsh-plugin-upgrader/lib/version
  */
@@ -38,6 +39,24 @@ export declare function comparePre(left: readonly string[], right: readonly stri
  * @returns negative when left is older.
  */
 export declare function compareVersions(left: string | undefined | null, right: string | undefined | null): number;
+/**
+ * Does a version fall inside a manifest range?
+ *
+ * The host gate calls `semver.satisfies(version, range, { includePrerelease:
+ * true })` before it installs anything, so prereleases take part in comparisons
+ * here for the same reason: a plugin declaring `>=0.2.0-rc.2 <0.3.0-0` accepts
+ * the `0.2.1-rc.5` build people actually run, and marking that version
+ * unusable would be a lie.
+ *
+ * Ranges this module cannot parse answer `true`. A manifest written in a way
+ * this parser does not understand must never be the reason a version is called
+ * incompatible — the host stays the judge, and the page only loses a hint.
+ *
+ * @param version - the version to test, such as `0.2.1-rc.5`.
+ * @param range - a range as a manifest writes it; `''` means "no limit".
+ * @returns whether the version is inside the range.
+ */
+export declare function satisfiesRange(version: string | undefined | null, range: string | undefined | null): boolean;
 /**
  * The tag a published version was released under.
  *

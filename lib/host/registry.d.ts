@@ -35,7 +35,44 @@ export interface VersionManifest extends RepoManifest {
             dsh?: unknown;
         };
     } | undefined;
+    peerDependencies?: Record<string, unknown> | undefined;
 }
+/**
+ * The DSH requirement one published version declares, and where it came from.
+ *
+ * The host refuses to install a plugin whose declaration does not admit the
+ * running runtime, so the page has to read the same declaration — from the same
+ * place, in the same order — before it offers the version.
+ */
+export interface DshRequirement {
+    /** The range as the manifest wrote it, e.g. `>=0.2.0-rc.2 <0.3.0-0`. */
+    range: string;
+    /** Which field it came from; `engines` wins over `peerDependencies`. */
+    source: 'engines' | 'peers';
+    /** How many `@deepseek-ai/dsh*` peers had to match; 1 for an engine range. */
+    count: number;
+}
+/**
+ * Read the DSH requirement out of one published manifest.
+ *
+ * This mirrors the host gate exactly: `engines.dsh` decides alone when present,
+ * and only otherwise do the `@deepseek-ai/dsh*` peer ranges matter. Reading them
+ * in the other order would mark versions usable that the host then refuses,
+ * which is the failure this whole path exists to prevent.
+ *
+ * @param manifest - one entry of a packument's `versions` map.
+ * @returns the requirement, or `undefined` when the manifest declares none.
+ */
+export declare function dshRequirementOf(manifest: VersionManifest | undefined): DshRequirement | undefined;
+/**
+ * Does one published version admit a runtime version?
+ *
+ * @param manifest - the published manifest.
+ * @param runtimeVersion - the DSH build this process is running, when known.
+ * @returns `false` only when both sides are known and the range rejects the
+ * runtime; `undefined` when either side is missing.
+ */
+export declare function meetsDshRequirement(manifest: VersionManifest | undefined, runtimeVersion: string | undefined): boolean | undefined;
 /** The packument fields this module reads beyond {@link PackumentLike}. */
 export interface FullPackument extends PackumentLike {
     versions?: Record<string, VersionManifest | undefined> | undefined;
@@ -87,6 +124,18 @@ export interface VersionRow {
      * a version as an ordinary upgrade sets the person up for exactly that.
      */
     unavailable?: string;
+    /**
+     * `false` when this version's declared DSH requirement excludes the runtime
+     * this process is running.
+     *
+     * Absent — not `true` — when either side is unknown: a version whose manifest
+     * declares nothing, or a host whose own version could not be read, is not
+     * evidence of incompatibility. Only a range that was read and did not admit
+     * the runtime sets this to `false`.
+     */
+    compatible?: boolean;
+    /** The DSH requirement behind {@link compatible}, for the tooltip. */
+    requires?: string;
 }
 /** The packument slice the tab renders. */
 export interface ShapedPackument {
@@ -232,5 +281,5 @@ export declare function probeRegistry(base: string): Promise<ProbeResult>;
  * @param tagNames - the repository's tag names, when known.
  * @returns the slice.
  */
-export declare function shapePackument(packument: FullPackument | undefined, installedVersion: string | undefined, tagNames: ReadonlySet<string> | undefined): ShapedPackument;
+export declare function shapePackument(packument: FullPackument | undefined, installedVersion: string | undefined, tagNames: ReadonlySet<string> | undefined, runtimeVersion?: string | undefined): ShapedPackument;
 //# sourceMappingURL=registry.d.ts.map

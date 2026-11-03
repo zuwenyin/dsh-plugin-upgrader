@@ -10,6 +10,7 @@
 import { compareVersions } from './version.ts'
 import { repoUrlOf, type PackumentLike } from './repo.ts'
 import { inlineIcon, pickText, registryBase, sourceKind, type SourceKind } from './bundle.ts'
+import { runtimeVersionOf } from './runtime.ts'
 import {
   cachedTags,
   fetchPackument,
@@ -92,6 +93,15 @@ export interface OverviewRow {
    * like an up-to-date package.
    */
   mirrorMissing?: string[]
+  /**
+   * The DSH requirement of {@link latest}, when that release cannot run here.
+   *
+   * The upgrade button targets `latest`, so a newer release the host would
+   * refuse has to be visible as a refusal, not as an upgrade that fails halfway
+   * through. Set only when `latest` is newer than what is installed and its
+   * declared requirement excludes this runtime.
+   */
+  blocked?: { version: string; requires: string }
 }
 
 /** The whole overview response body. */
@@ -118,6 +128,13 @@ export interface OverviewOptions {
   locale?: 'zh' | 'en'
   /** The registry saved in this plugin's config; empty follows pnpm. */
   registry?: string
+  /**
+   * The DSH runtime version to judge versions against.
+   *
+   * Injected by the tests; the host call leaves it out and the version is read
+   * from the running process instead.
+   */
+  runtimeVersion?: string
 }
 
 /**
@@ -146,6 +163,15 @@ export async function buildOverview(
   const savedRegistry = typeof options.registry === 'string' ? options.registry.trim() : ''
   const base = registryBase(registries, savedRegistry)
   const locale = options.locale === 'zh' ? 'zh' : 'en'
+  /*
+   * The runtime version the host's own gate quotes decides whether a published
+   * version can be installed at all. It is read from this process rather than
+   * from the profile, because a profile's `node_modules` holds links into an npx
+   * cache that can be a different build entirely.
+   */
+  const runtimeVersion = typeof options.runtimeVersion === 'string'
+    ? options.runtimeVersion
+    : runtimeVersionOf(process.argv)
 
   const installed = bundles.filter((bundle) => bundle.installed === true)
   const rows = await mapLimited(installed, PACKUMENT_CONCURRENCY, async (bundle): Promise<OverviewRow> => {
@@ -204,7 +230,7 @@ export async function buildOverview(
        * actually loaded. Omitting it left every row `current: false`, so the
        * version the user already has still offered a "back to latest" button.
        */
-      const shaped = shapePackument(data as FullPackument, bundle.version, undefined)
+      const shaped = shapePackument(data as FullPackument, bundle.version, undefined, runtimeVersion)
       entry.latest = shaped.latest
       entry.repoUrl = shaped.repoUrl
       entry.versions = shaped.versions
@@ -229,7 +255,7 @@ export async function buildOverview(
     const tagNames = repoUrl === undefined
       ? undefined
       : await cachedTags(repoUrl, tagCache, options.force === true)
-    const shaped = shapePackument(data as FullPackument, bundle.version, tagNames)
+    const shaped = shapePackument(data as FullPackument, bundle.version, tagNames, runtimeVersion)
     entry.latest = shaped.latest
     entry.repoUrl = shaped.repoUrl
     entry.versions = shaped.versions
@@ -238,6 +264,20 @@ export async function buildOverview(
     entry.versionError = shaped.versionError
     entry.upgradable =
       entry.latest !== undefined && compareVersions(entry.latest, bundle.version) > 0
+    /*
+     * A newer release the host would refuse is not an upgrade. The install would
+     * be rejected by the compatibility gate after the manager had already
+     * started replacing the bundle, which is how a "switch version" click used
+     * to leave the package removed. Mark it instead: the row says why, and the
+     * version list keeps the same answer for every older release.
+     */
+    if (entry.upgradable && entry.latest !== undefined) {
+      const head = shaped.versions.find((version) => version.version === entry.latest)
+      if (head !== undefined && head.compatible === false) {
+        entry.upgradable = false
+        entry.blocked = { version: head.version, requires: head.requires ?? '' }
+      }
+    }
     /*
      * Ask the upstream registry what this mirror is missing. The mirror's own
      * document cannot answer that — it simply omits the version — so without
@@ -268,7 +308,7 @@ export async function buildOverview(
     registry: base,
     savedRegistry,
     registries,
-    runtimeVersion: typeof runtime === 'string' ? runtime : null,
+    runtimeVersion: typeof runtime === 'string' ? runtime : (runtimeVersion ?? null),
     bundles: rows,
   }
 }

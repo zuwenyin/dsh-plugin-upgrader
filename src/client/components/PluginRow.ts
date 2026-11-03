@@ -122,6 +122,22 @@ export function PluginRow(props: PluginRowProps): unknown {
               }`,
             )
           : null,
+        /*
+         * The newest release refuses to run on this DSH version. The row's
+         * upgrade button points at `latest`, so it is no longer an upgrade:
+         * naming the requirement is the only thing that turns "nothing happens"
+         * into something the person can act on.
+         */
+        row.blocked !== undefined
+          ? h(
+              'div',
+              {
+                className: 'dsh-pu-note is-err',
+                title: t('incompatibleLatest', row.blocked.version, row.blocked.requires),
+              },
+              t('incompatibleLatest', row.blocked.version, row.blocked.requires),
+            )
+          : null,
         failure !== undefined && retriable
           ? h(
               'div',
