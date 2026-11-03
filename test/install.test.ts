@@ -664,6 +664,92 @@ test('a package still on disk is re-selected instead of reinstalled', async () =
   assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: true }])
 })
 
+test('a failed upgrade leaves a plugin that was switched off switched off', async () => {
+  /*
+   * The recovery used to re-select whatever was still on disk, and re-selecting
+   * means enabling: a user who keeps a plugin switched off, upgrades it, and
+   * watches the upgrade fail would find it switched ON. The removal is what
+   * deselected it, so putting the selection back is only right for a step that
+   * wanted the plugin loaded.
+   */
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : refused('operation-error', 'install')),
+    bundles: [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: false, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+  const log: string[] = []
+  const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0', enabled: false }, (line) => log.push(line))
+
+  assert.equal(outcome.ok, false)
+  assert.deepEqual(calls.enable, [], 'a plugin the user keeps off is not loaded by a failed upgrade')
+  assert.doesNotMatch(log.join('\n'), /re-select pkg/)
+})
+
+test('a thrown install after the removal keeps that state too', async () => {
+  // The other failure shape: `pnpm` dying is the same window, so it needs the
+  // same answer rather than only the manager-refused path.
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : new Error('pnpm died')),
+    bundles: [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: false, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+  const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0', enabled: false }, () => {})
+
+  assert.equal(outcome.ok, false)
+  assert.deepEqual(calls.enable, [])
+})
+
+test('a failed upgrade still puts back a plugin the step wanted loaded', async () => {
+  // The fix must not become "never restore": a step that wanted the plugin on
+  // is the case the recovery was written for.
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : refused('operation-error', 'install')),
+    bundles: [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: false, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+  const log: string[] = []
+  await runStep(manager, { name: 'pkg', version: '2.0.0', enabled: true }, (line) => log.push(line))
+
+  assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: true }])
+  assert.match(log.join('\n'), /re-select pkg/)
+})
+
+test('a failed upgrade does not toggle a plugin that is already on', async () => {
+  // Same end state, so there is nothing to ask the manager for.
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : refused('operation-error', 'install')),
+    bundles: [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+  await runStep(manager, { name: 'pkg', version: '2.0.0', enabled: true }, () => {})
+
+  assert.deepEqual(calls.enable, [])
+})
+
+test('a failed upgrade switches off a plugin the manager reports as loaded', async () => {
+  /*
+   * `enabled: false` is the state the step wants, not a claim about the current
+   * one: a manager that still reads the bundle as loaded has to be told to drop
+   * it, otherwise "I kept it off and the upgrade failed" ends with a plugin
+   * running that nobody asked for.
+   */
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : refused('operation-error', 'install')),
+    bundles: [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+  const log: string[] = []
+  await runStep(manager, { name: 'pkg', version: '2.0.0', enabled: false }, (line) => log.push(line))
+
+  assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: false }])
+  assert.match(log.join('\n'), /disable pkg \(restoring the previous state\)/)
+})
+
 test('a rollback that is refused says so instead of pretending', async () => {
   // The step already failed; the rollback must not swallow the fact that the
   // plugin is still missing.
