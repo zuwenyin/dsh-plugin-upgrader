@@ -22,6 +22,13 @@
   `src/host/version.ts` implements the matching, checked against `node-semver` over 49
   ranges × 41 versions (2035 pairs, all agreeing). Three inequalities were wrong before
   that check — most visibly `~0.1.7-rc.1` admitting `0.1.6`.
+- **A batch no longer disappears when the plugin replaces itself.** Upgrading another
+  plugin is what makes the host re-stage this plugin's own module in a `live` profile, so
+  the install a user was watching could evict the code tracking it: the replacement
+  instance started with an empty job map, answered `unknown-job` for the id the page was
+  polling, and the page reported "lost contact" over an install that finished fine. The
+  batch store now lives on `globalThis` under a stable symbol, so whichever module
+  instance answers knew the batch. Cleanup only clears the run that owns it.
 
 ## 1.6.3 — 2026-11-02
 

@@ -111,6 +111,29 @@ const ACTIVITY_CHARS = 120
 /** Lifecycle of one batch. */
 type JobStatus = 'queued' | 'running' | 'finished' | 'cancelled'
 
+/**
+ * Where the batch bookkeeping lives.
+ *
+ * These maps used to be locals of `apply`, which made every batch disappear the
+ * moment the host replaced this plugin's code. The host does exactly that while
+ * a batch is running: a batch is what upgrades other plugins, and HMR evicts
+ * any loaded file whose bytes changed — including this one, when the user
+ * upgrades the upgrader, or when a linked checkout is rebuilt. The tab then
+ * polls a job id the new instance has never heard of, gets `unknown-job`, and
+ * reports "lost contact" over an install that finished perfectly well.
+ *
+ * A module-level `const` would not fix that: HMR re-evaluates the module, so a
+ * fresh module scope is created and the map would start empty again. Only an
+ * object reached through `globalThis` outlives the re-evaluation. That is the
+ * point of the symbol — the same key is found by the replacement module, so the
+ * new instance adopts the batch that is still running in the old one instead of
+ * pretending it never existed.
+ *
+ * The map is still expected to empty out on a real restart, which is correct:
+ * a restarted host has no running batch to report.
+ */
+const JOB_STORE_KEY = Symbol.for('dsh-plugin-upgrader/jobs')
+
 /** One batch of steps, as the browser polls it. */
 interface JobRecord {
   id: string
@@ -145,8 +168,49 @@ interface JobRecord {
   attempt?: { index: number; total: number; registry: string | null }
   cacheDirty?: boolean
   abandoned?: boolean
-  /** The request ids this job has run under, newest last. */
+  /**
+   * The request ids this job has run under, newest last.
+   */
   requestIds: string[]
+}
+
+/**
+ * The state that has to outlive a module replacement.
+ *
+ * `jobs` is keyed by job id and read by the poll route; `live` is the batch the
+ * manager events belong to. Both are reached through `globalThis` so a
+ * replacement module instance adopts a batch that is still running rather than
+ * answering `unknown-job` for it.
+ */
+interface JobStore {
+  jobs: Map<string, JobRecord>
+  /** The job manager events belong to, while one is running. */
+  live: JobRecord | null
+  /** The installation the manager is currently running, for cancellation. */
+  inFlight: { requestId: string } | null
+}
+
+/**
+ * The shared batch store, created once per process.
+ *
+ * Read through `globalThis` rather than a module-level constant: a replaced
+ * module gets a fresh scope, so a module-level map would be empty again and the
+ * very batch that caused the replacement would vanish.
+ *
+ * Exported so a test can prove a re-evaluated module adopts the same map
+ * instead of starting empty — which is the whole point of keeping it off the
+ * module scope.
+ *
+ * @returns the process-wide store.
+ */
+export function sharedJobStore(): JobStore {
+  const scope = globalThis as { [JOB_STORE_KEY]?: JobStore }
+  let store = scope[JOB_STORE_KEY]
+  if (store === undefined) {
+    store = { jobs: new Map(), live: null, inFlight: null }
+    scope[JOB_STORE_KEY] = store
+  }
+  return store
 }
 
 /** One step as the request body carries it, before validation. */
@@ -168,10 +232,8 @@ interface RawStep {
 export function apply(ctx: HostContext, config?: UpgraderConfig): void {
   const packumentCache = new Map<string, PackumentEntryLike>()
   const tagCache = new Map<string, TagEntryLike>()
-  const jobs = new Map<string, JobRecord>()
-  let inFlight: { requestId: string } | null = null
-  /** The job a manager event belongs to, while one is running. */
-  let liveJob: JobRecord | null = null
+  const store = sharedJobStore()
+  const jobs = store.jobs
 
   /**
    * The registry the user picked, read fresh on every use.
@@ -235,7 +297,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
     }
     job.status = 'running'
     job.heartbeatAt = Date.now()
-    liveJob = job
+    store.live = job
     const beat = setInterval(() => {
       job.heartbeatAt = Date.now()
     }, HEARTBEAT_MS)
@@ -254,11 +316,11 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
           (message) => appendLog(job, message),
           (requestId) => {
             job.requestIds.push(requestId)
-            inFlight = { requestId }
+            store.inFlight = { requestId }
           },
           chosenRegistry(),
         )
-        inFlight = null
+        store.inFlight = null
         job.heartbeatAt = Date.now()
         job.results.push(outcome)
         job.done = job.results.length
@@ -272,8 +334,13 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
       }
     } finally {
       clearInterval(beat)
-      liveJob = null
-      inFlight = null
+      /*
+       * Only clear what this run owns. A replacement instance shares the store,
+       * so a blind `store.live = null` from a run that is finishing would blind
+       * whichever batch the new instance had just adopted.
+       */
+      if (store.live === job) store.live = null
+      if (store.inFlight?.requestId === job.requestIds.at(-1)) store.inFlight = null
     }
     job.status = job.cancelled ? 'cancelled' : 'finished'
     job.current = undefined
@@ -455,7 +522,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
         running.cancelled = true
         appendLog(running, '! cancel requested')
         const manager = requireManager()
-        const target = inFlight?.requestId ?? running.requestIds.at(-1)
+        const target = store.inFlight?.requestId ?? running.requestIds.at(-1)
         if (manager !== undefined && target !== undefined && target !== '') {
           try {
             const outcome = await manager.cancelInstall(target)
@@ -551,7 +618,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
   subscribe(
     'plugin-manager/install-log',
     (chunk: InstallLogChunk) => {
-      const job = liveJob
+      const job = store.live
       if (job === null) return
       const tagged = chunk.requestId !== undefined && chunk.requestId !== ''
       if (tagged && !job.requestIds.includes(chunk.requestId as string)) return
@@ -583,7 +650,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
   subscribe(
     'plugin-manager/install-state',
     (state: InstallState) => {
-      const job = liveJob
+      const job = store.live
       if (job === null) return
       if (!job.requestIds.includes(state.requestId)) return
       job.phase = state.phase

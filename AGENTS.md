@@ -539,6 +539,35 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
 
 ---
 
+## 19. 批次状态不能住在 `apply()` 的闭包里
+
+**不可退化。** 1.7.0 修的真实事故：用户升级 `dsh-dream-skin`，升级**成功了**
+（`package.json` 已经写进 `11.3.0`），页面却报「升级进度已失去联系（宿主可能重启过）」。
+
+- **根因不是重启，是模块被替换了。** `live` profile 下，本插件升级别的插件这个动作本身
+  就会让 HMR 重新协调 profile，**本插件的模块也会被重新求值**。`jobs` / `inFlight` / `liveJob`
+  原本是 `apply()` 的闭包局部变量，新实例于是拿到一张空 Map，对页面正在轮询的那个 id
+  回答 `GET /job` → 404 `unknown-job`，`watchJob` 累计 4 次失败后判失联。
+- **模块级常量救不了。** 重新求值会造新的模块作用域，放在模块顶层的 `const jobs = new Map()`
+  一样是空的。状态必须挂在 `globalThis` 上，用一个稳定的符号
+  `Symbol.for('dsh-plugin-upgrader/jobs')`，由 `sharedJobStore()` 读取。
+- **`Symbol.for` 而不是 `Symbol()`**：前者按字符串跨模块实例共享，后者每次调用都是新的。
+- **清理只清自己那份**：`runJob` 的 `finally` 里必须是
+  `if (store.live === job) store.live = null`，不能无条件置空——旧实例收尾时新实例可能
+  已经接管了另一个批次，无条件清空会把它的管理事件流打断。
+- **进程重启时该没有的就是没有**：`globalThis` 不跨进程，宿主真重启后 id 查不到是正确
+  的语义，不要为了「看起来健壮」把批次落盘。
+
+**代码：** `src/index.ts` 的 `JobStore` / `sharedJobStore()` / `apply()` 开头、
+`runJob` 的 `finally`、`install-log` 与 `install-state` 两个订阅里的 `store.live`、
+`POST cancel` 的 `store.inFlight`。
+
+**守护：** `test/job-store.test.ts`（走真实路由：`apply` 一次 → `POST job` 拿 id →
+再 `apply` 一次模拟替换实例 → `GET job?id=` 必须 200）。把 `apply` 里的
+`const store = sharedJobStore()` 换回闭包局部对象，这条必须变红（实测是 `404 !== 200`）。
+
+---
+
 ## 改完必须做的事
 
 ```bash
