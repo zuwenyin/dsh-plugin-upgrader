@@ -496,6 +496,46 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
 
 ---
 
+## 18. 每个版本先跟「正在跑的 DSH」比一次，再决定要不要给按钮
+
+**不可退化。** 1.7.0 修的真实事故：用户在 DSH `0.2.1-rc.5` 上把
+`@smalltailqwq/dsh-client-ui-skin-maid-atelier` 从 `0.1.9` 切到 `0.1.5`。`0.1.5` 声明的是
+`peerDependencies["@deepseek-ai/dsh"] = ">=0.1.7-rc.1 <0.1.8-0"`，宿主的兼容性闸门拒绝了它
+——但拒绝发生在 pnpm 已经把 `0.1.9` 摘掉之后，结果 profile 里**这个插件整个没了**，
+`cordis.patch.yml` 里还留着一个悬空的 `- id:`。
+
+- **判定规则必须和宿主一模一样**：`engines.dsh` 存在时**只看它**，`peerDependencies`
+  被忽略；否则 `peerDependencies` 里每个 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 都要满足，
+  `workspace:^` / `~` / `*` 视为「就是当前运行时」，预发布参与比较。
+  改这里之前先对照宿主侧的 `plugin-compatibility`——页面说「可以」而宿主随后拒绝，
+  比页面什么都不说更糟。
+- **运行时版本从宿主的入口读，不从 profile 读。** profile 里的
+  `@deepseek-ai/dsh-app-boot` 是指向 npx 缓存的 junction，实测 `0.1.2-rc.1`，而宿主真正报的
+  是 `0.2.1-rc.5`。用错版本会把**本来能装**的版本标成装不了。代码在 `src/host/runtime.ts`，
+  起点是 `process.argv` 里的宿主入口。
+- **读不到就什么都不标。** `compatible` 只有「读到范围且确实不满足」时才是 `false`，
+  否则是 `undefined`（缺席）。不要改成读到就写 `true`/读不到就写 `false`：
+  前者在版本读不到时骗人，后者会藏掉所有版本。
+- **两个方向都要管**：降级（历史里不兼容当前 DSH 的版本禁用切换按钮）与升级
+  （`latest` 不兼容当前 DSH 时 `upgradable` 必须是 `false`，并把 `blocked` 带到行上）。
+  只做其中一边，另一边照样能把包弄没。
+- **区间匹配不许随便「简化」。** `src/host/version.ts` 的 `satisfiesRange` 与
+  `node-semver` 在 `includePrerelease` 下逐位对齐，已经在 49 个 range × 41 个版本
+  共 2035 组上验证过。写这段时最初有三处错：`~0.1.7-rc.1` 漏了 patch 下界（会放过
+  `0.1.6`）、部分版本（`1.x` / `1.2`）下界缺 `-0`（`0.2.0-rc.1` 会漏掉）、连字符区间上界
+  用 `<=`（`1.2.3 - 2.0.0` 会放过 `2.0.0-rc.1`）。再改这段就再跑一次那个对比。
+
+**代码：** `src/host/runtime.ts`（`runtimeVersionOf`）、`src/host/version.ts`（`satisfiesRange`）、
+`src/host/registry.ts`（`dshRequirementOf` / `meetsDshRequirement` / `shapePackument` 的第 4 个参数）、
+`src/host/overview.ts`（`blocked` 与 `upgradable` 的降级）、`src/client/components/VersionLine.ts`
+（禁用切换按钮）、`src/client/components/PluginRow.ts`（`blocked` 提示）。
+
+**守护：** `test/compatibility.test.ts`（8 条，两条主用例就是上面那两个方向）、
+`test/version.test.ts`（14 条区间匹配）、`test/overview.test.ts`
+（`an upgrade the host would refuse is not offered as an upgrade` 等 3 条）。
+
+---
+
 ## 改完必须做的事
 
 ```bash
