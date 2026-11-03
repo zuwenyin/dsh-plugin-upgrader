@@ -449,6 +449,13 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
                   phase: live.phase,
                   activity: live.activity,
                   attempt: live.attempt,
+                  /**
+                   * The heartbeat the host re-stamps on a timer. It is the one
+                   * value that proves the host is still working on this batch
+                   * while pnpm says nothing, so the panel can tell a quiet
+                   * install from a stalled one.
+                   */
+                  heartbeatAt: live.heartbeatAt,
                   log: live.log.slice(-ADOPTED_LOG_LIMIT),
                 },
           jobs: [...jobs.entries()]
@@ -536,6 +543,11 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
           stepStartedAt: job.stepStartedAt,
           finishedAt: job.finishedAt,
           abandoned: job.abandoned,
+          /**
+           * The heartbeat the host re-stamps on a timer, so the panel can see
+           * that the batch is still being worked on even when pnpm is quiet.
+           */
+          heartbeatAt: job.heartbeatAt,
           log: job.log,
           results: job.results,
         })

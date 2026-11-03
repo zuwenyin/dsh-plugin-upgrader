@@ -16,9 +16,16 @@ export type Phase = InstallState['phase'] | 'waiting' | 'verifying';
 /**
  * The phase a log chunk puts a job in.
  *
- * Only the pre-start state is ever overwritten here. `applying` and
- * `cancelling` come from the manager and are more specific than anything pnpm's
- * own output could imply, so a late chunk must not walk them back.
+ * The manager's `applying` and `cancelling` are its last words — the change is
+ * being written, or the batch is being stopped — and nothing pnpm prints after
+ * that is more specific, so they are never walked back.
+ *
+ * `installing` is deliberately *not* in that list. The manager announces it
+ * before pnpm runs (`announce("installing")` happens ahead of the pnpm call),
+ * so it says "pnpm is running" and not "the install is past the check". Latching
+ * it meant a two-minute lockfile check was reported as "downloading and
+ * installing" for its whole length — the panel was naming a phase pnpm had
+ * already left.
  *
  * @param current - the phase the job is in now.
  * @param chunk - the chunk that just arrived.

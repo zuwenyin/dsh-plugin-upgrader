@@ -118,6 +118,14 @@ export interface JobSnapshot {
   stepStartedAt?: number
   finishedAt?: number
   abandoned?: boolean
+  /**
+   * When the host last reported that it is still working on this batch.
+   *
+   * The host re-stamps it on a timer, so it keeps moving while pnpm is quiet —
+   * during a registry retry, for instance. That is what tells a healthy but
+   * silent install apart from a stalled one.
+   */
+  heartbeatAt?: number
   log: string[]
   results?: StepResult[]
 }

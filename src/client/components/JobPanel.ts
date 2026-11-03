@@ -35,8 +35,57 @@ const CLOCK_MS = 1000
  * sleeping window, a host that restarted. The clock has to notice: a step that
  * "has been running" for eighteen minutes because nobody updated it is worse
  * than no clock at all.
+ *
+ * The threshold is measured against the *host's* heartbeat, not against pnpm's
+ * output: a lockfile check or a registry retry can leave pnpm quiet for a
+ * minute while the host is very much alive, and that silence is not a stall.
  */
 const STALE_SNAPSHOT_MS = 20 * 1000
+
+/**
+ * What the panel remembers about the last snapshot that was different.
+ */
+export interface Liveness {
+  /** The fingerprint of that snapshot. */
+  stamp: string
+  /** When it arrived. */
+  at: number
+}
+
+/**
+ * The fingerprint of a snapshot: what has to change for it to count as progress.
+ *
+ * The host's heartbeat is part of it. The host re-stamps that on a timer, so it
+ * moves for as long as the host is working on the batch — including the long
+ * stretches where pnpm has nothing to print. Without it, a healthy install that
+ * happens to be quiet looked exactly like a stalled one.
+ *
+ * @param job - the snapshot in hand.
+ * @returns the fingerprint.
+ */
+export function fingerprint(job: JobSnapshot): string {
+  return `${job.id}|${job.stepStartedAt ?? ''}|${job.done ?? 0}|${job.status}|${job.activity ?? ''}|${job.heartbeatAt ?? ''}`
+}
+
+/**
+ * Decide whether the panel is looking at a snapshot that stopped moving.
+ *
+ * @param previous - what was remembered about the last snapshot that changed.
+ * @param job - the snapshot in hand.
+ * @param now - the current time.
+ * @param thresholdMs - how long a snapshot may stay unchanged.
+ * @returns the liveness to remember, and whether it has been unchanged for too long.
+ */
+export function staleness(
+  previous: Liveness,
+  job: JobSnapshot,
+  now: number,
+  thresholdMs: number,
+): { liveness: Liveness; stale: boolean } {
+  const stamp = fingerprint(job)
+  const liveness = previous.stamp === stamp ? previous : { stamp, at: now }
+  return { liveness, stale: now - liveness.at > thresholdMs }
+}
 
 /**
  * A clock that ticks only while `running`, so a settled panel stops redrawing.
@@ -77,14 +126,14 @@ export function JobPanel(props: JobPanelProps): unknown {
   const now = useNow(inStep, job.stepStartedAt)
   /**
    * A snapshot is stale when the panel has not seen a *different* one for a
-   * while. `startedAt`/`stepStartedAt`/`done` stand in for the whole payload:
-   * any real progress moves at least one of them. The activity line counts too —
-   * a step that keeps printing is alive even when nothing else has moved.
+   * while. The fingerprint covers the whole payload: any real progress moves
+   * the step, the counter, the status, the newest line pnpm printed — or the
+   * host's heartbeat, which keeps ticking even while pnpm is quiet.
    */
-  const stamp = `${job.id}|${job.stepStartedAt ?? ''}|${job.done ?? 0}|${job.status}|${job.activity ?? ''}`
-  const lastChange = React.useRef({ stamp, at: Date.now() })
-  if (lastChange.current.stamp !== stamp) lastChange.current = { stamp, at: Date.now() }
-  const stale = inStep && Date.now() - lastChange.current.at > STALE_SNAPSHOT_MS
+  const lastChange = React.useRef<Liveness>({ stamp: fingerprint(job), at: Date.now() })
+  const { liveness, stale: unchanged } = staleness(lastChange.current, job, Date.now(), STALE_SNAPSHOT_MS)
+  lastChange.current = liveness
+  const stale = inStep && unchanged
   const stepMs =
     job.stepStartedAt === undefined ? 0 : Math.max(0, now - job.stepStartedAt)
   const phaseKey =

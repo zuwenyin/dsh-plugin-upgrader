@@ -132,3 +132,18 @@ test('a replaced module still answers for the batch the previous one started', a
   assert.equal(polled.status, 200, 'the replacement instance must know the id, not answer unknown-job')
   assert.equal(polled.body.id, id)
 })
+
+test('the batch reports the heartbeat the panel judges liveness by', async () => {
+  // The panel used to call a batch stale when pnpm had printed nothing new,
+  // which fired on a healthy install during a registry retry. It now judges
+  // liveness by the host's heartbeat — so the host has to report it.
+  const first = context()
+  apply(first.ctx)
+  const started = await call(first.route(), 'POST', '/api/plugin-upgrader/job', {
+    steps: [{ name: 'left-pad', version: '1.0.0' }],
+  })
+  const id = started.body.id as string
+  const polled = await call(first.route(), 'GET', `/api/plugin-upgrader/job?id=${encodeURIComponent(id)}`)
+  assert.equal(polled.status, 200)
+  assert.equal(typeof polled.body.heartbeatAt, 'number', 'the job payload must carry the heartbeat')
+})
