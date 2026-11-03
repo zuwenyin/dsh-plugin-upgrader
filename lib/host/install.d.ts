@@ -26,6 +26,8 @@ export interface StepOutcome {
     detail?: string;
     pendingBuilds?: string[];
     warnings?: string[];
+    /** The version this step put back after destroying the one that was there. */
+    rolledBack?: string;
     packageResult?: {
         exitCode: number;
         kind?: string;
@@ -35,6 +37,21 @@ export interface StepOutcome {
 }
 /** Allowed per-step actions. */
 export declare const ACTIONS: Set<string>;
+/**
+ * One version's DSH requirement, looked up only when a step is about to run.
+ *
+ * The lookup is injected rather than imported so this module keeps no registry
+ * client: the caller already has the packument cache and the chosen registry,
+ * and asking the network here would duplicate both.
+ */
+export interface InstallGuard {
+    /** The DSH build this process runs, when it could be read. */
+    runtimeVersion?: string | undefined;
+    /** The requirement `name@version` declares, or `undefined` when unknown. */
+    requirementOf: (name: string, version: string) => Promise<{
+        range: string;
+    } | undefined>;
+}
 /**
  * Re-apply the enabled state a step asked for after the package was replaced.
  *
@@ -78,9 +95,10 @@ export declare function restoreSelection(manager: PluginManager, name: string, l
  * @param log - progress sink.
  * @param announce - receives the request id the step installs under.
  * @param registry - the registry chosen in this plugin's config, if any.
+ * @param guard - the compatibility check, when the caller can supply one.
  * @returns the outcome record.
  */
-export declare function runStep(manager: PluginManager, step: StepRecord, log: LogSink, announce?: RequestIdSink, registry?: string): Promise<StepOutcome>;
+export declare function runStep(manager: PluginManager, step: StepRecord, log: LogSink, announce?: RequestIdSink, registry?: string, guard?: InstallGuard): Promise<StepOutcome>;
 /**
  * Whether a step names something this plugin is willing to install.
  *

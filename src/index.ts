@@ -35,10 +35,11 @@ import { savedRegistry, type UpgraderConfig } from './host/config.ts'
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildHostInfo } from './host/hostinfo.ts'
 import { buildOverview } from './host/overview.ts'
-import { runStep, validateStep, type StepOutcome } from './host/install.ts'
+import { runStep, validateStep, type InstallGuard, type StepOutcome } from './host/install.ts'
 import { profileDirFrom, recoverPendingDrop } from './host/manifest.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
-import { probeRegistry } from './host/registry.ts'
+import { dshRequirementOf, fetchPackument, probeRegistry, type VersionManifest } from './host/registry.ts'
+import { runtimeVersionOf } from './host/runtime.ts'
 import {
   asPluginManager,
   type HostContext,
@@ -277,6 +278,32 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
   const requireManager = (): PluginManager | undefined => asPluginManager(ctx.get('pluginManager', false))
 
   /**
+   * The compatibility check handed to every step.
+   *
+   * It answers from the same packument the page already reads, so asking costs
+   * at most one registry request — and only for a package the page has never
+   * listed. When the requirement or the runtime version cannot be read, the
+   * answer is "unknown" and the manager's own gate stays the final word; that
+   * is deliberate, since guessing here would refuse versions that work.
+   *
+   * @returns the guard, or `undefined` when no runtime version could be read.
+   */
+  const buildGuard = (): InstallGuard | undefined => {
+    const runtimeVersion = runtimeVersionOf(process.argv)
+    if (runtimeVersion === undefined) return undefined
+    return {
+      runtimeVersion,
+      requirementOf: async (name, version) => {
+        const { data } = await fetchPackument(chosenRegistry(), name, packumentCache, false)
+        if (data === undefined || data === null || typeof data !== 'object') return undefined
+        const manifest = (data as { versions?: Record<string, VersionManifest | undefined> }).versions?.[version]
+        const requirement = dshRequirementOf(manifest)
+        return requirement === undefined ? undefined : { range: requirement.range }
+      },
+    }
+  }
+
+  /**
    * Run a batch job to completion in the background.
    *
    * The heartbeat is a timer, not a per-step write. One upgrade can spend
@@ -319,6 +346,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
             store.inFlight = { requestId }
           },
           chosenRegistry(),
+          buildGuard(),
         )
         store.inFlight = null
         job.heartbeatAt = Date.now()

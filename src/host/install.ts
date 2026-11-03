@@ -10,6 +10,7 @@
 import { explainLockTimeout } from './lock.ts'
 import type { BundleInfo, ChangeResult, PluginManager, StepRecord } from './manager.ts'
 import { confirmDependency, dropDependency, profileDirFrom, restoreDependency } from './manifest.ts'
+import { satisfiesRange } from './version.ts'
 
 /** Progress sink for one job. */
 export type LogSink = (message: string) => void
@@ -40,6 +41,8 @@ export interface StepOutcome {
   detail?: string
   pendingBuilds?: string[]
   warnings?: string[]
+  /** The version this step put back after destroying the one that was there. */
+  rolledBack?: string
   packageResult?: {
     exitCode: number
     kind?: string
@@ -53,6 +56,16 @@ export const ACTIONS = new Set<string>(['upgrade', 'switch'])
 
 /** The manager's code for "a live loader fiber still owns this bundle". */
 const IN_USE = 'bundle-in-use'
+
+/**
+ * The manager's code for "this version does not admit the running DSH".
+ *
+ * Worth naming: it is the one refusal that is *certain* to repeat. Every other
+ * failure might be a flaky registry or a busy lock, but a version whose declared
+ * range rejects this runtime will be rejected again no matter how many times the
+ * replacement is retried — so retrying it by removing first only destroys more.
+ */
+const INCOMPATIBLE = 'incompatible-version'
 
 /**
  * Read the manager's failure code off a result or a throw.
@@ -126,6 +139,58 @@ async function readsAsEnabled(manager: PluginManager, name: string): Promise<boo
   } catch {
     return undefined
   }
+}
+
+/**
+ * One bundle as the manager currently reports it.
+ *
+ * "Absent" and "present but with no version" have to be told apart: the first
+ * means a rollback has to reinstall, the second only means the listing did not
+ * carry a version — re-selecting is still the right repair there.
+ *
+ * @param manager - the plugin manager.
+ * @param name - the bundle to read.
+ * @returns the entry, or `undefined` when it is not listed at all.
+ */
+async function bundleOf(manager: PluginManager, name: string): Promise<BundleInfo | undefined> {
+  try {
+    const bundles = await manager.listBundles()
+    const list: BundleInfo[] = Array.isArray(bundles) ? bundles : []
+    return list.find((item) => item?.name === name)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The version a bundle currently has on disk, read before anything is removed.
+ *
+ * This is the value a failed replacement rolls back to. It has to be read up
+ * front: after `removeForReplacement` the package is gone, and the manager has
+ * nothing left to report a version for — which is precisely the moment the
+ * rollback needs to know what to put back.
+ *
+ * @param manager - the plugin manager.
+ * @param name - the bundle to read.
+ * @returns the installed version, or `undefined` when it cannot be read.
+ */
+async function installedVersion(manager: PluginManager, name: string): Promise<string | undefined> {
+  const version = (await bundleOf(manager, name))?.version
+  return typeof version === 'string' && version.trim() !== '' ? version.trim() : undefined
+}
+
+/**
+ * One version's DSH requirement, looked up only when a step is about to run.
+ *
+ * The lookup is injected rather than imported so this module keeps no registry
+ * client: the caller already has the packument cache and the chosen registry,
+ * and asking the network here would duplicate both.
+ */
+export interface InstallGuard {
+  /** The DSH build this process runs, when it could be read. */
+  runtimeVersion?: string | undefined
+  /** The requirement `name@version` declares, or `undefined` when unknown. */
+  requirementOf: (name: string, version: string) => Promise<{ range: string } | undefined>
 }
 
 /**
@@ -321,6 +386,106 @@ export async function restoreSelection(
 }
 
 /**
+ * Put the previous version back after a replacement destroyed it.
+ *
+ * The in-place route only knows the install was refused after pnpm has run, and
+ * the manager's compatibility gate runs *after* pnpm rewrote the lockfile — so a
+ * version the host refuses can leave the package gone while the manifest entry
+ * is the only thing that got restored. The plugin then disappears from the page
+ * with no way back except reinstalling by hand.
+ *
+ * Installing the old version again is the repair that actually works: pnpm puts
+ * the files back, and the manager activates them exactly as it did before. It is
+ * deliberately attempted for every failure that follows a removal, not only the
+ * compatibility one — an entry pointing at a version that is not on disk is
+ * broken either way.
+ *
+ * Best effort: the step has already failed for its own reason, and a rollback
+ * that also fails must not replace that reason.
+ *
+ * @param manager - the plugin manager.
+ * @param step - the step that failed.
+ * @param previous - the version that was installed before the step ran.
+ * @param options - the install options the caller already built.
+ * @param log - progress sink.
+ * @param announce - receives the request id the rollback installs under.
+ * @returns whether the old version is back.
+ */
+async function rollBack(
+  manager: PluginManager,
+  step: StepRecord,
+  previous: string,
+  options: Record<string, unknown>,
+  log: LogSink,
+  announce?: RequestIdSink,
+): Promise<boolean> {
+  const spec = `${step.name}@${previous}`
+  const requestId =
+    globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  announce?.(requestId)
+  log(`roll back: install ${spec} again (the failed replacement already removed it)`)
+  try {
+    const result = await manager.installBundle(spec, { ...options, requestId })
+    const back = result?.application === 'applied' || result?.application === 'restart-required'
+    if (result?.error !== undefined || !back) {
+      log(
+        `  ! rollback refused (${result?.error?.code ?? 'no change'}); ${step.name}@${previous} is not installed — ` +
+          'install it again from the Installed tab',
+      )
+      return false
+    }
+    log(`  ✓ ${step.name}@${previous} is back where it was`)
+    return true
+  } catch (error) {
+    log(
+      `  ! rollback failed: ${describeFailure(error instanceof Error ? error.message : String(error))}; ` +
+        `${step.name}@${previous} is not installed`,
+    )
+    return false
+  }
+}
+
+/**
+ * Put the profile back the way the step found it, whatever it managed to break.
+ *
+ * Two different damages need two different repairs, and picking the wrong one
+ * makes things worse:
+ *
+ * - the package is still on disk but was deselected — re-selecting it is enough,
+ *   and installing an old version over it would be a pointless pnpm run;
+ * - the package is gone — re-selecting nothing, which is what the old code did,
+ *   leaves an entry in `dependencies` that nothing can load, so the plugin is
+ *   simply missing from the page.
+ *
+ * @param manager - the plugin manager.
+ * @param step - the step that failed.
+ * @param previous - the version installed before the step ran, when known.
+ * @param options - the install options the caller already built.
+ * @param log - progress sink.
+ * @param announce - receives the request id a rollback installs under.
+ * @returns whether the profile was put back.
+ */
+async function recover(
+  manager: PluginManager,
+  step: StepRecord,
+  previous: string | undefined,
+  options: Record<string, unknown>,
+  log: LogSink,
+  announce?: RequestIdSink,
+): Promise<boolean> {
+  const entry = await bundleOf(manager, step.name)
+  if (entry !== undefined && entry.installed !== false) {
+    await restoreSelection(manager, step.name, log)
+    return false
+  }
+  if (previous === undefined) {
+    log(`  ! ${step.name} is no longer installed, and its previous version was not recorded`)
+    return false
+  }
+  return rollBack(manager, step, previous, options, log, announce)
+}
+
+/**
  * Replace a version without removing the bundle first.
  *
  * The manager refuses a spec whose package name is already a dependency, and
@@ -432,6 +597,7 @@ async function replaceWithoutRemoval(
  * @param log - progress sink.
  * @param announce - receives the request id the step installs under.
  * @param registry - the registry chosen in this plugin's config, if any.
+ * @param guard - the compatibility check, when the caller can supply one.
  * @returns the outcome record.
  */
 export async function runStep(
@@ -440,6 +606,7 @@ export async function runStep(
   log: LogSink,
   announce?: RequestIdSink,
   registry?: string,
+  guard?: InstallGuard,
 ): Promise<StepOutcome> {
   const spec = `${step.name}@${step.version}`
   const requestId =
@@ -452,6 +619,32 @@ export async function runStep(
   const base = { name: step.name, version: step.version, spec, requestId }
   const restoreEnabled = typeof step.enabled === 'boolean' ? step.enabled : undefined
   log(`install ${spec}`)
+
+  /*
+   * Ask the version itself before touching anything.
+   *
+   * The host's own gate is the final word and it runs inside pnpm's wake-up, so
+   * without this check a refusal arrives after the manager has already deselected
+   * — or removed — the bundle. Reading the published requirement first turns
+   * "your plugin is gone" into "this version was never going to work", which is
+   * the difference between a repair and a loss.
+   */
+  const requirement = guard === undefined ? undefined : await guard.requirementOf(step.name, step.version)
+  if (requirement !== undefined && guard?.runtimeVersion !== undefined) {
+    if (!satisfiesRange(guard.runtimeVersion, requirement.range)) {
+      log(
+        `  ! ${spec} declares ${requirement.range}, which excludes DSH ${guard.runtimeVersion}; nothing was changed`,
+      )
+      return {
+        ...base,
+        ok: false,
+        application: 'failed',
+        stage: 'install',
+        message: INCOMPATIBLE,
+        detail: requirement.range,
+      }
+    }
+  }
 
   const options = {
     saveExact: true,
@@ -467,6 +660,12 @@ export async function runStep(
   }
 
   let result: ChangeResult
+  /*
+   * Read the version on disk *before* the manager can take it away. This is the
+   * value a failed replacement rolls back to, and once `removeForReplacement`
+   * has run there is nothing left to ask.
+   */
+  const previous = await installedVersion(manager, step.name)
   try {
     result = await manager.installBundle(spec, { ...options, requestId })
   } catch (error) {
@@ -534,12 +733,12 @@ export async function runStep(
       result = await manager.installBundle(spec, { ...options, requestId: retryId })
     } catch (error) {
       /*
-       * The removal above already deselected the bundle, so a throw here leaves
-       * it installed-but-unloaded: still in `dependencies`, still on disk, no
-       * longer selected, and therefore invisible on the page. Put the selection
-       * back before reporting, or the operator has to repair it by hand.
+       * The removal above happened for real, so a throw here can leave the
+       * plugin gone. `recover` tells the two damages apart: still-on-disk means
+       * re-select it, gone means install the previous version again. Confusing
+       * them is what made "upgrade failed" also mean "plugin disappeared".
        */
-      await restoreSelection(manager, step.name, log)
+      const back = await recover(manager, step, previous, options, log, announce)
       return {
         ...base,
         requestId: retryId,
@@ -549,6 +748,7 @@ export async function runStep(
         message: `install after removal failed: ${describeFailure(
           error instanceof Error ? error.message : String(error),
         )}`,
+        ...(back ? { rolledBack: previous } : {}),
       }
     }
   }
@@ -557,7 +757,7 @@ export async function runStep(
    * removal already done. Same hazard, same repair; the reported reason stays
    * whatever the manager said.
    */
-  if (result?.error !== undefined) await restoreSelection(manager, step.name, log)
+  const restored = result?.error === undefined ? false : await recover(manager, step, previous, options, log, announce)
   // Only a change that landed has an enabled state to restore: a failed install
   // left nothing behind, and asking to toggle it would report a second, louder
   // error (`operation-error`) for a package that was never added.
@@ -567,6 +767,7 @@ export async function runStep(
     ...base,
     ...(enabled === undefined ? {} : { enabled }),
     ok: installed,
+    ...(restored ? { rolledBack: previous } : {}),
     application: result?.application,
     changed: result?.changed === true,
     stage: result?.stage,

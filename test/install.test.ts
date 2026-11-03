@@ -546,3 +546,150 @@ test('an unreadable profile falls back to the removal instead of guessing', asyn
   })
 })
 
+test('a version the host would refuse is never installed at all', async () => {
+  /*
+   * The incident this guards: switching to an older version that declares a DSH
+   * range excluding the running build. The gate fires after pnpm has already
+   * rewritten the lockfile, so by the time it answers the old package is gone.
+   * Asking the manifest first means pnpm never runs and nothing is removed.
+   */
+  const { manager, calls } = fakeManager({})
+  const log: string[] = []
+  const outcome = await runStep(manager, { name: 'pkg', version: '0.1.5' }, (line) => log.push(line), undefined, undefined, {
+    runtimeVersion: '0.2.1-rc.5',
+    requirementOf: async () => ({ range: '>=0.1.7-rc.1 <0.1.8-0' }),
+  })
+
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.message, 'incompatible-version')
+  assert.equal(outcome.detail, '>=0.1.7-rc.1 <0.1.8-0')
+  assert.deepEqual(calls.install, [], 'nothing was installed')
+  assert.deepEqual(calls.remove, [], 'nothing was removed')
+  assert.match(log.join('\n'), /excludes DSH 0\.2\.1-rc\.5; nothing was changed/)
+})
+
+test('a version that fits the running host still installs', async () => {
+  // The guard must not be a blanket refusal: the same plugin at 0.1.9 passes.
+  const { manager, calls } = fakeManager({})
+  const outcome = await runStep(manager, { name: 'pkg', version: '0.1.9' }, () => {}, undefined, undefined, {
+    runtimeVersion: '0.2.1-rc.5',
+    requirementOf: async () => ({ range: '>=0.2.0-rc.2 <0.3.0-0' }),
+  })
+
+  assert.equal(outcome.ok, true)
+  assert.equal(calls.install.length, 1)
+})
+
+test('an unknown requirement is not treated as a refusal', async () => {
+  /*
+   * A package the registry never described, or a manifest without a DSH range,
+   * has to install exactly as before. Refusing on "I could not read it" would
+   * break every plugin that predates the compatibility field.
+   */
+  const { manager, calls } = fakeManager({})
+  const outcome = await runStep(manager, { name: 'pkg', version: '1.0.0' }, () => {}, undefined, undefined, {
+    runtimeVersion: '0.2.1-rc.5',
+    requirementOf: async () => undefined,
+  })
+
+  assert.equal(outcome.ok, true)
+  assert.equal(calls.install.length, 1)
+})
+
+test('a package the manager destroyed is put back at its old version', async () => {
+  /*
+   * The repair that the old code could not do. `restoreSelection` only puts the
+   * bundle back in the list; when pnpm has already deleted the files there is
+   * nothing to select, and the plugin disappears from the page. Re-installing
+   * the version that was there before is the only thing that actually works.
+   */
+  await withProfile(
+    { name: 'desktop', dependencies: { pkg: '1.0.0' } },
+    async () => {
+      const gone = [
+        { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+      ]
+      const { manager, calls } = fakeManager({
+        installs: (call) => {
+          if (call === 0) return refused('already-installed', 'install')
+          // The in-place retry is refused, which demotes the step to the
+          // removal route; the install after the removal is what the host's
+          // compatibility gate rejects, leaving the package gone.
+          if (call === 1) return refused('operation-error', 'install')
+          if (call === 2) return refused('incompatible-version', 'install')
+          return applied({ version: '1.0.0' })
+        },
+        bundles: gone,
+      })
+      // After the removal the package is gone from the list.
+      const realList = manager.listBundles
+      let reads = 0
+      manager.listBundles = async () => {
+        reads += 1
+        // The first read captures the version to roll back to; from then on the
+        // package is missing, exactly as it was in the incident.
+        return reads === 1 ? realList.call(manager) : []
+      }
+
+      const log: string[] = []
+      const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+      assert.equal(outcome.ok, false)
+      assert.equal(outcome.rolledBack, '1.0.0', 'the outcome says what was put back')
+      const specs = calls.install.map((entry) => entry.spec)
+      assert.deepEqual(specs, ['pkg@2.0.0', 'pkg@2.0.0', 'pkg@2.0.0', 'pkg@1.0.0'])
+      assert.match(log.join('\n'), /roll back: install pkg@1\.0\.0 again/)
+    },
+  )
+})
+
+test('a package still on disk is re-selected instead of reinstalled', async () => {
+  /*
+   * The other half of the distinction. A refused install that left the files
+   * alone must not trigger a second pnpm run — that would be slower, and the
+   * version on disk is already the right one.
+   */
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('already-installed', 'install') : refused('operation-error', 'install')),
+    bundles: [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: false, availability: 'profile', removable: true } as BundleInfo,
+    ],
+  })
+
+  const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.rolledBack, undefined)
+  assert.equal(calls.install.length, 2, 'no third install was attempted')
+  assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: true }])
+})
+
+test('a rollback that is refused says so instead of pretending', async () => {
+  // The step already failed; the rollback must not swallow the fact that the
+  // plugin is still missing.
+  await withProfile({ name: 'desktop', dependencies: { pkg: '1.0.0' } }, async () => {
+    const { manager, calls } = fakeManager({
+      installs: (call) => {
+        if (call === 0) return refused('already-installed', 'install')
+        if (call === 1) return refused('operation-error', 'install')
+        if (call === 2) return refused('incompatible-version', 'install')
+        return refused('operation-error', 'install')
+      },
+    })
+    const listed = [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+    ]
+    let reads = 0
+    manager.listBundles = async () => (reads++ === 0 ? listed : [])
+
+    const log: string[] = []
+    const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.rolledBack, undefined)
+    assert.match(log.join('\n'), /rollback refused \(operation-error\); pkg@1\.0\.0 is not installed/)
+    assert.equal(calls.install.length, 4)
+  })
+})
+
+

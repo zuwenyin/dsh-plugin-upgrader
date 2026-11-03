@@ -29,6 +29,17 @@
   polling, and the page reported "lost contact" over an install that finished fine. The
   batch store now lives on `globalThis` under a stable symbol, so whichever module
   instance answers knew the batch. Cleanup only clears the run that owns it.
+- **A version the host would refuse is never installed, and a failed replacement puts the
+  old one back.** The page already marked those releases, but a client-side mark cannot
+  stop a request, and the host's gate fires after pnpm has rewritten the lockfile — which
+  is how a refused switch used to end with the package gone. The step now reads the
+  target's declared range *before* touching anything and answers
+  `incompatible-version` with the range it wanted, leaving the profile untouched. When a
+  failure slips past that (the gate is still the final word), the recovery distinguishes
+  the two damages instead of guessing: a package that is still on disk gets re-selected, a
+  package that is gone gets the previous version installed again. The outcome carries
+  `rolledBack` so the log can say what came back, and a rollback that is itself refused
+  says so rather than reporting a clean failure over a missing plugin.
 
 ## 1.6.3 — 2026-11-02
 
