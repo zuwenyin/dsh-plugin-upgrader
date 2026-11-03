@@ -167,18 +167,39 @@ why the first install did nothing`）、`test/manifest.test.ts`（
 ## 7. 慢的时候必须看得见在干什么
 
 **不可退化。** 一次升级可能真的跑几分钟（pnpm 会拿锁文件里每个条目回源核对）。
+真实事故：降级 `@linxin666/dsh-pet` 时，面板整整两分钟写着「正在下载并安装」，
+而日志里 pnpm 正在逐条核对锁文件（`? Verifying lockfile against supply-chain policies
+(91 entries)...`），同一时间还刷着 `[WARN] GET … ETIMEDOUT. Will retry in 1 minute.`。
+两个都是假象：**阶段说错了**，**「状态已停止更新」误报了**。
 
-- 阶段：`waiting` → `verifying`（看到 `Verifying lockfile … supply-chain policies`）→
-  `installing` → `applying` / `cancelling`。`applying` / `cancelling` / `installing`
-  一旦由 manager 上报，**不许**被后续日志回退。
-- 纯空白的 chunk 是 keep-alive，不算「有进展」。
+- 阶段：`waiting` → `verifying` → `installing` → `applying` / `cancelling`。
+  - `installing` **不代表**「已经过了校验」：manager 是在 pnpm 启动**之前**就上报
+    `installing` 的（`dsh-plugin-manager` 先 `announce('installing')` 再 `runPnpm`），
+    所以 pnpm 的校验行是在 `installing` 之后才到的，它必须能把阶段改写成 `verifying`。
+    1.7.2 之前 `installing` 一旦出现就被钉住，于是整个校验过程都显示成「正在下载并安装」。
+  - `applying` / `cancelling` 是 manager 的最后一句话，**不许**被后续日志回退。
+  - `verifying` 一直保持到 pnpm 给出结论：`✓ Lockfile passes supply-chain policies` /
+    `✗ Lockfile failed supply-chain policy check`。校验期间 pnpm 还会打印重试和进度计数，
+    所以中途的普通行**不能**结束它。
+  - 开始行和结论行都含 "supply-chain policies"，**只**匹配这个词分不出开始和结论——
+    开始行匹配 `/verifying lockfile/i`，结论行匹配 `/lockfile.*passes supply-chain policies/i`
+    与 `/lockfile.*failed supply-chain policy check/i`。
+  - 纯空白的 chunk 是 keep-alive，不算「有进展」。
+- 「还在动」要问**宿主**，不是问 pnpm。pnpm 在重试时一分钟不打印一行是正常的，
+  按「日志没变」判定停滞，会在健康升级上误报「状态已停止更新」。
+  宿主每 2 秒重新盖一次心跳（`job.heartbeatAt`），面板用心跳判定活性。
 - 面板要有：已用时计时、不确定态进度条、阶段文字、慢速提示、日志尾部、状态停滞检测。
 
-**代码：** `src/host/progress.ts:38` `nextPhase`（`:25` `VERIFYING`）、
-`src/host/progress.ts:16` `Phase`（含 `verifying`）；
-`src/client/components/JobPanel.ts`；文案 `src/client/copy.ts:60-69`。
+**代码：** `src/host/progress.ts:63` `nextPhase`（`:27` `CHECK_STARTED`、`:36` `CHECK_PASSED`、
+`:43` `CHECK_FAILED`）、`src/host/progress.ts:16` `Phase`（含 `verifying`）；
+宿主心跳 `src/index.ts:92` `HEARTBEAT_MS`、`:326-330` 盖戳、`:437-461` overview 的
+`active.heartbeatAt`、`:532-553` `GET job` 的 `heartbeatAt`；
+`src/client/types.ts` `JobSnapshot.heartbeatAt`；
+`src/client/components/JobPanel.ts` `fingerprint` / `staleness`；
+文案 `src/client/copy.ts:60-69`。
 
-**守护：** `test/progress.test.ts`（5 条）。
+**守护：** `test/progress.test.ts`（8 条）、`test/job-panel.test.ts`（5 条）、
+`test/job-store.test.ts`（「the batch reports the heartbeat the panel judges liveness by」）。
 
 ---
 

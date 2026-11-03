@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.7.2 — 2026-11-03
+
+- **A slow install now says what it is actually doing.** Downgrading a plugin used to sit
+  on "downloading and installing" for minutes while pnpm was checking the lockfile
+  (`? Verifying lockfile against supply-chain policies (91 entries)...`), because the
+  host announces `installing` *before* pnpm even starts — so by the time pnpm's own
+  verification line arrived, the phase had already been pinned and could not be
+  corrected. The phase is now read from pnpm's words: the check is named `verifying`
+  (正在校验依赖锁文件) even when the manager has already said `installing`, and it keeps
+  that name until pnpm gives the verdict (`✓ Lockfile passes supply-chain policies` /
+  `✗ Lockfile failed supply-chain policy check`) — the registry retries and progress
+  counters printed inside the check no longer end it early. `applying` and `cancelling`,
+  the manager's last words, are still never walked back.
+- **A healthy install no longer reports "status stopped updating".** The panel decided
+  that a batch had stalled when *pnpm* had printed nothing new for twenty seconds, but
+  pnpm stays quiet for a minute during a registry retry — which is normal, not a stall.
+  The panel now judges liveness by the *host's* heartbeat, which the host re-stamps
+  every two seconds for as long as it is working on the batch; the host reports it in
+  both the overview and the job payload. The twenty-second threshold and the wording
+  are unchanged: a host that really stopped reporting still says so.
+
 ## 1.7.1 — 2026-11-03
 
 - **A failed upgrade no longer switches on a plugin that was switched off.** Swapping a

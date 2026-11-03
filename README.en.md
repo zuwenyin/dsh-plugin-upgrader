@@ -198,6 +198,16 @@ There are four phases: `verifying` (checking the lockfile) → `installing` →
 `applying` / `cancelling`. The lockfile line can sit unchanged for minutes and reads
 exactly like a hang, which is why it gets a phase name of its own.
 
+The phase is read from *pnpm's own words*. The host announces `installing` before pnpm
+even starts, so pnpm's later verification line still has to be able to name the phase
+as `verifying` — until it gives the verdict (`✓ Lockfile passes supply-chain policies`).
+
+"Is it still working?" is asked of the *host*, not of pnpm. pnpm stays quiet for a
+minute during a registry retry, which is normal; judging a stall by "the log did not
+change" reported healthy upgrades as stuck. The host re-stamps a heartbeat every two
+seconds and the panel judges liveness by that, so only a host that really stopped
+reporting is told so.
+
 Two related bugs fixed with it:
 
 - The heartbeat is a timer (2 s), no longer a write per completed step. A single step
