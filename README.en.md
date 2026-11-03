@@ -23,7 +23,9 @@ English · [中文](./README.md)
 - **One-click upgrade** — bump every upgradable plugin to its newest version, with
   progress, per-plugin results and failure reasons.
 - **Upgrades never unload the plugin** — a version replacement happens in place
-  (see below), so the plugin is not torn down and reinstalled.
+  (see below), so the plugin is not torn down and reinstalled. When the profile's
+  writer lock cannot be taken, or the in-place step is refused, it falls back to
+  uninstall-then-install and says which reason it was.
 - **Progress you can actually see** — the raw pnpm output (registry retries, lockfile
   verification), a live elapsed clock per step, an indeterminate bar while a step
   runs, and a cancel button that works.
@@ -141,9 +143,14 @@ dependency (`already-installed`), so pnpm never runs. The order is therefore:
    (journal first) and install again — pnpm writes the new version back, the plugin is
    **not unloaded**, the loader keeps its instance, and no enabled state has to be
    restored.
-3. Only when step 2 declines (unreadable manifest, failed install, refusal) does the
-   old remove + install path run. The previous version is reported back so the UI can
-   warn about a downgrade.
+3. Only when step 2 declines (unreadable manifest, no writer lock, failed install,
+   refusal) does the old remove + install path run, and the log names which one it was.
+   The previous version is reported back so the UI can warn about a downgrade.
+
+Step 2 edits `package.json` under **the harness's own writer lock** (`package.json.lock`),
+the same one `plugin-manager` takes. If the lock cannot be taken it gives up within a
+second and writes **not one byte**, then takes the always-correct fallback path — far
+better than slipping an edit into somebody else's read-modify-write and losing the entry.
 
 > The code shipped in 1.2.0, but on the desktop app it **never actually ran** between
 > 1.2.0 and 1.4.0: `profileDirFrom()` only knew `DSH_PROFILE_DIR` / `DSH_HOME` +
@@ -161,6 +168,10 @@ plugin out of the manifest — uninstallable in effect. So a journal
 reads it, restores the entry when the manifest really lacks it, merely clears the record
 when the install landed, and ignores a record that no longer describes the manifest.
 A failed repair only logs; it never stops the tab from loading.
+
+The record is only cleared once the entry is **confirmed back on disk under the lock**.
+A restore that cannot take the lock fails and leaves the record for the next load:
+clearing it after failing to write is exactly how a profile stops being repairable.
 
 ### Preserving the enabled flag
 
@@ -243,7 +254,7 @@ report does not have to read the source to find out.
 
 | Capability | Scope | Notes |
 | --- | --- | --- |
-| Files | **the profile directory only** | Reads and writes `package.json`, writes `package.json.upgrader-journal.json`, reads `package.json.lock`. No filesystem walking, nothing outside the profile |
+| Files | **the profile directory only** | Reads and writes `package.json`, writes `package.json.upgrader-journal.json`, reads and briefly takes `package.json.lock`. No filesystem walking, nothing outside the profile |
 | Network (outbound) | the configured npm registry, the GitHub API | `GET` only, see below |
 | Commands | **none** | No `child_process`, no spawned processes; installs go through the host's `pluginManager` |
 | Credentials | **none** | No tokens, no `.npmrc` reads, no authentication. Private registries rely on pnpm's own configuration |
@@ -292,10 +303,13 @@ are development-time only and are not part of the published tarball's runtime.
   no progress, so it cannot occupy the slot forever. A host restart interrupts the job
   in flight and the UI reports that as a failure.
 - **Writer lock**: the manager's own budget is 120 seconds; a timeout is translated
-  into who holds the lock and whether a restart clears it.
+  into who holds the lock and whether a restart clears it. The in-place path needs that
+  same lock, gives up within a second, and falls back to remove + install rather than
+  editing somebody else's manifest.
 - **A failed upgrade**: the in-place path journals the dropped dependency before
   removing it and restores it on failure; a killed process is repaired on the next
-  load. The plugin stays installed and keeps its enabled state.
+  load. A restore that cannot take the lock keeps the record instead of clearing it,
+  so the next load repairs it. The plugin stays installed and keeps its enabled state.
 - **Unreachable registry, rate-limited GitHub, offline**: every one of them degrades to
   "this one thing could not be read, here is why, retry", never to a silent "no new
   version" or "no version history".

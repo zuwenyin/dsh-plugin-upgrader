@@ -20,6 +20,7 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 
 - **一键升级** —— 一次把全部可升级插件升到最新版，带进度、逐项结果和失败原因。
 - **升级不卸载** —— 换版本走 in-place 替换，插件不会被卸下来再装回去（详见下文）。
+  拿不到 profile 写入锁、或 in-place 那一步被拒时，会退回「先卸载再装」的老路并写明原因。
 - **看得见的进度** —— 升级时直接显示 pnpm 的原始输出（含换源重试、lockfile 校验），
   每步都有已用时计时和不确定态进度条，卡住时可以一键取消。
 - **多选升级** —— 勾选任意几个插件，只升级选中的这些。
@@ -117,8 +118,13 @@ pnpm 根本不会跑。所以换版本的顺序是：
 1. **先直接 `install`**；
 2. 被拒绝时，把 profile `package.json` 里那条依赖**临时**摘掉（先写 journal），再 install ——
    pnpm 写回新版本，**插件不被卸载**，加载器里的实例不断，启用状态也不用恢复；
-3. 只有第 2 步主动放弃（manifest 读不了 / install 失败 / 被拒绝）时，
-   才退回 remove + install 的老路径。
+3. 只有第 2 步主动放弃（manifest 读不了 / 拿不到写入锁 / install 失败 / 被拒绝）时，
+   才退回 remove + install 的老路径，并在日志里说明是哪一种。
+
+第 2 步改动 `package.json` 时会**拿 harness 自己的写入锁**（`package.json.lock`），
+与 `plugin-manager` 用同一把锁：拿不到锁就一秒内放弃、**一个字节都不写**，
+然后走第 3 步那条永远正确的老路——比在别人的 read-modify-write 中间插一脚、
+把条目弄丢要好得多。
 
 旧版本号会回传给界面，用于提示这是降级。
 
@@ -135,6 +141,10 @@ pnpm 根本不会跑。所以换版本的顺序是：
 所以删除之前先写 `package.json.upgrader-journal.json`：下次插件加载时会读它，
 manifest 里确实缺这条就补回去，已经装上就只清掉记录，记录和 manifest 对不上就忽略。
 恢复失败只是打日志，不会拦住标签页加载。
+
+记录只在**锁内确认条目真的回到盘上**之后才清掉。还原那一步如果拿不到写入锁，
+它宁可失败并留下记录，让下次加载再修一次——把记录清了却没能写回去，
+才是真的没法自愈。
 
 ### enabled 状态保留
 
@@ -204,7 +214,7 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 
 | 能力 | 范围 | 说明 |
 | --- | --- | --- |
-| 文件 | **仅 profile 目录** | 读写 `package.json`、写 `package.json.upgrader-journal.json`、读 `package.json.lock`。不遍历文件系统，不碰 profile 以外的路径 |
+| 文件 | **仅 profile 目录** | 读写 `package.json`、写 `package.json.upgrader-journal.json`、读写并短暂持有 `package.json.lock`。不遍历文件系统，不碰 profile 以外的路径 |
 | 网络（出站） | 配置的 npm 源、GitHub API | 只发 `GET`，见下 |
 | 命令 | **无** | 不调用 `child_process`，不 spawn 任何进程；安装动作交给宿主的 `pluginManager` |
 | 凭据 | **无** | 不读 token，不读 `.npmrc`，不做任何认证。私有源依赖 pnpm 自己的配置 |
@@ -245,8 +255,11 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 - **job 心跳 2 秒**，15 分钟没进展判废，不会永久占位；主进程重启会中断正在跑的 job，
   界面显示为失败而不是永远转圈。
 - **写入锁**：manager 自己的预算是 120 秒，超时会把锁的状态翻成人话（谁持有、要不要重启）。
+  in-place 那条路自己也要这把锁，拿不到就在一秒内放弃并改走 remove + install，
+  不会去改别人的 manifest。
 - **升级失败**：in-place 替换会先把被摘掉的依赖记进 journal，失败就还原；进程被杀掉时，
-  下次加载会把依赖补回去。失败了插件仍在、启用状态仍在。
+  下次加载会把依赖补回去。还原时拿不到锁就保留 journal 等下次，不会先把记录清掉。
+  失败了插件仍在、启用状态仍在。
 - **registry 读不到 / GitHub 限流 / 离线**：都降级成「这一项读不到 + 原因 + 重试入口」，
   不会伪装成「没有新版本」「没有历史版本」。
 
@@ -300,7 +313,7 @@ dsh-plugin-upgrader/
 │   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表、镜像缺口
 │   │   ├── install.ts    单步安装：in-place 替换、remove 回退、enabled 状态恢复
 │   │   ├── manifest.ts   profile package.json 读写、journal、加载时恢复
-│   │   ├── lock.ts       读 profile 写入锁、把锁超时翻成人话
+│   │   ├── lock.ts       读 profile 写入锁、在锁内改 manifest、把锁超时翻成人话
 │   │   ├── progress.ts   从 pnpm 原始输出推断 job 阶段
 │   │   ├── bundle.ts     插件元数据（来源分类、多语言字段、图标）
 │   │   ├── repo.ts       仓库 URL 归一化

@@ -24,6 +24,9 @@
 import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
+import type { ManifestLockOptions } from './lock.ts'
+import { LOCK_BUSY, withManifestLock } from './lock.ts'
+
 /** Where a profile keeps its manifest. */
 export const MANIFEST_FILE = 'package.json'
 
@@ -232,12 +235,30 @@ export type RecoveryResult =
  * @param dir - the profile directory.
  * @returns what happened.
  */
-export function recoverPendingDrop(dir: string): RecoveryResult {
+export function recoverPendingDrop(dir: string, options?: ManifestLockOptions): RecoveryResult {
   const journal = readJournal(dir)
   if (journal === undefined) {
     clearJournal(dir)
     return { kind: 'none' }
   }
+  const applied = withManifestLock(dir, () => undoDrop(dir, journal), options)
+  if (applied === undefined) {
+    // Somebody is rewriting the manifest right now. Leaving the record alone is
+    // the whole point: the next load will try again, and a repair that raced a
+    // live writer is exactly how an entry ends up lost for good.
+    return { kind: 'failed', name: journal.name, reason: LOCK_BUSY }
+  }
+  return applied
+}
+
+/**
+ * The repair itself, run under the writer lock.
+ *
+ * @param dir - the profile directory.
+ * @param journal - the record describing the entry that went missing.
+ * @returns what happened.
+ */
+function undoDrop(dir: string, journal: DropJournal): RecoveryResult {
   const { manifest, error } = readManifest(dir)
   if (manifest === undefined) return { kind: 'failed', name: journal.name, reason: error ?? 'unreadable manifest' }
   const dependencies = manifest.dependencies
@@ -282,7 +303,19 @@ export function recoverPendingDrop(dir: string): RecoveryResult {
  * @param name - the package whose entry should be present.
  * @returns whether the entry was there, and the record therefore cleared.
  */
-export function confirmDependency(dir: string, name: string): boolean {
+export function confirmDependency(dir: string, name: string, options?: ManifestLockOptions): boolean {
+  const confirmed = withManifestLock(dir, () => settleRecord(dir, name), options)
+  return confirmed ?? false
+}
+
+/**
+ * The confirmation itself, run under the writer lock.
+ *
+ * @param dir - the profile directory.
+ * @param name - the package whose entry should be present.
+ * @returns whether the entry was there, and the record therefore cleared.
+ */
+function settleRecord(dir: string, name: string): boolean {
   const { manifest } = readManifest(dir)
   if (manifest === undefined) return false
   const dependencies = manifest.dependencies
@@ -299,7 +332,19 @@ export function confirmDependency(dir: string, name: string): boolean {
  * @param name - the package name to drop.
  * @returns what happened; `absent` means the guard cannot fire anyway.
  */
-export function dropDependency(dir: string, name: string): DropResult {
+export function dropDependency(dir: string, name: string, options?: ManifestLockOptions): DropResult {
+  const dropped = withManifestLock(dir, () => removeEntry(dir, name), options)
+  return dropped ?? { kind: 'unavailable', reason: LOCK_BUSY }
+}
+
+/**
+ * The removal itself, run under the writer lock.
+ *
+ * @param dir - the profile directory.
+ * @param name - the package name to drop.
+ * @returns what happened.
+ */
+function removeEntry(dir: string, name: string): DropResult {
   const { manifest, error } = readManifest(dir)
   if (manifest === undefined) return { kind: 'unavailable', reason: error ?? 'unreadable manifest' }
   const dependencies = manifest.dependencies
@@ -342,7 +387,33 @@ export function dropDependency(dir: string, name: string): DropResult {
  * @param spec - the dependency range to write back.
  * @returns whether the entry was restored.
  */
-export function restoreDependency(dir: string, name: string, spec: string): boolean {
+export function restoreDependency(
+  dir: string,
+  name: string,
+  spec: string,
+  options?: ManifestLockOptions,
+): boolean {
+  const restored = withManifestLock(dir, () => putEntryBack(dir, name, spec), options)
+  return restored ?? false
+}
+
+/**
+ * The restore itself, run under the writer lock.
+ *
+ * Clearing the journal is part of the same critical section on purpose. An
+ * earlier version cleared it after releasing the lock, reasoning that the entry
+ * was "on disk either way" — but a writer that had already read the manifest
+ * while the entry was dropped could commit its stale snapshot afterwards, taking
+ * the entry with it while the record that could have repaired it was already
+ * gone. Only a restore that is still holding the lock can honestly claim the
+ * entry will survive.
+ *
+ * @param dir - the profile directory.
+ * @param name - the package name to restore.
+ * @param spec - the dependency range to write back.
+ * @returns whether the entry was restored.
+ */
+function putEntryBack(dir: string, name: string, spec: string): boolean {
   const { manifest } = readManifest(dir)
   if (manifest === undefined) return false
   const dependencies = manifest.dependencies
@@ -359,8 +430,8 @@ export function restoreDependency(dir: string, name: string, spec: string): bool
       return false
     }
   }
-  // The entry is on disk either way, so the pending record has served its
-  // purpose: leaving it would make the next load try to restore it again.
+  // The entry just went to disk under the lock, so nothing can overwrite it
+  // with a snapshot that predates this write: the record has served its purpose.
   clearJournal(dir)
   return true
 }

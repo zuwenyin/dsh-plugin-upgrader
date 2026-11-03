@@ -14,6 +14,21 @@
   carries no flag keeps the old answer — a failed replacement must not leave a plugin
   unloaded — so older clients and scripts behave exactly as before. The in-place path was
   never affected: it already restored through `options.enabled`.
+- **An in-place upgrade now edits the profile inside the harness's own writer lock.**
+  `dropDependency` and `restoreDependency` used to read, edit and rename
+  `package.json` without ever touching `package.json.lock`. That is a window a
+  concurrent writer can lose data in: it reads the manifest while the entry is
+  dropped, writes its own copy back afterwards, and the restored entry disappears —
+  and because the restore cleared the journal on its way out, the next start found
+  nothing left to repair. Both edits now run under `withManifestLock`, which takes
+  the same lock `atomic-write` does, retries for one second and then gives up
+  *without* touching the file, so the caller falls back to the manager's own
+  remove-then-install path. A lock this very process holds is reported busy at once
+  instead of being waited out: `atomic-write` never takes over its own holder, so
+  retrying could only end in a two-minute timeout. The journal is now cleared
+  inside the lock and only once the entry is really back, so a restore that could
+  not run is repaired at the next load rather than forgotten. Reported by
+  [@Herdeny](https://github.com/Herdeny) in awesome-dsh-plugins-2026#11.
 
 ## 1.7.0 — 2026-11-03
 

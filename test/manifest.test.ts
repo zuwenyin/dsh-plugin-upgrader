@@ -8,9 +8,11 @@ import { dropDependency, profileDirFrom, restoreDependency } from '../src/host/m
 import {
   JOURNAL_FILE,
   clearJournal,
+  confirmDependency,
   readJournal,
   recoverPendingDrop,
 } from '../src/host/manifest.ts'
+import { LOCK_BUSY, LOCK_FILE, withManifestLock } from '../src/host/lock.ts'
 
 /**
  * A throwaway profile directory with one dependency.
@@ -315,3 +317,131 @@ test('clearing a record that is not there is not an error', () => {
     fixture.cleanup()
   }
 })
+
+/** Hold the writer lock from a pid that is not running, as a live writer would. */
+function lockProfile(dir: string): void {
+  writeFileSync(join(dir, LOCK_FILE), '4242\n', 'utf8')
+}
+
+/** Release the writer lock. */
+function unlockProfile(dir: string): void {
+  rmSync(join(dir, LOCK_FILE), { force: true })
+}
+
+/** The lock waiting budget the racy cases use, so a refusal is instant. */
+const nowait = { waitMs: 0 } as const
+
+test('an entry is not dropped while somebody else holds the writer lock', () => {
+  const fixture = profile()
+  try {
+    lockProfile(fixture.dir)
+    const before = readFileSync(join(fixture.dir, 'package.json'), 'utf8')
+    const dropped = dropDependency(fixture.dir, 'dsh-plugin-upgrader', nowait)
+    assert.deepEqual(dropped, { kind: 'unavailable', reason: LOCK_BUSY })
+    // The whole point: the manifest is untouched, so there is no window in which
+    // a concurrent writer could read a profile that is missing an entry.
+    assert.equal(readFileSync(join(fixture.dir, 'package.json'), 'utf8'), before)
+    assert.equal(existsSync(join(fixture.dir, JOURNAL_FILE)), false, 'nothing was recorded')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a restore that cannot take the lock keeps the record so the next load repairs it', () => {
+  const fixture = profile()
+  try {
+    // Drop with the lock free, which is the normal path.
+    assert.deepEqual(dropDependency(fixture.dir, 'dsh-plugin-upgrader'), {
+      kind: 'dropped',
+      dependency: '1.1.1',
+    })
+    // Now a writer holds the lock, so the restore cannot write the entry back.
+    lockProfile(fixture.dir)
+    assert.equal(restoreDependency(fixture.dir, 'dsh-plugin-upgrader', '1.1.1', nowait), false)
+    // Clearing the record here is what turned a recoverable profile into a lost
+    // plugin: recovery would find nothing to do. It has to survive.
+    assert.deepEqual(readJournal(fixture.dir), {
+      name: 'dsh-plugin-upgrader',
+      spec: '1.1.1',
+      at: readJournal(fixture.dir)?.at,
+    })
+    unlockProfile(fixture.dir)
+    assert.deepEqual(recoverPendingDrop(fixture.dir, nowait), {
+      kind: 'restored',
+      name: 'dsh-plugin-upgrader',
+      spec: '1.1.1',
+    })
+    assert.equal(dependencyOf(fixture, 'dsh-plugin-upgrader'), '1.1.1')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a recovery that cannot take the lock leaves the record for the next load', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    lockProfile(fixture.dir)
+    assert.deepEqual(recoverPendingDrop(fixture.dir, nowait), {
+      kind: 'failed',
+      name: 'dsh-plugin-upgrader',
+      reason: LOCK_BUSY,
+    })
+    // Retrying against a live writer must not be confused with having repaired
+    // anything: the record is still the only thing that knows what went missing.
+    assert.equal(readJournal(fixture.dir)?.name, 'dsh-plugin-upgrader')
+    unlockProfile(fixture.dir)
+    assert.equal(recoverPendingDrop(fixture.dir).kind, 'restored')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('an overlapping writer cannot erase an entry the restore already put back', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    /*
+     * The shape of the original bug: a writer reads the manifest while the entry
+     * is dropped, and commits its snapshot afterwards. Under the lock protocol
+     * that read cannot happen without holding the lock, so the restore refuses
+     * (above) and the record survives. Here the writer takes the lock the way the
+     * manager does — read and write inside it — and the entry it reads is the one
+     * the restore wrote, so its commit keeps it.
+     */
+    assert.equal(restoreDependency(fixture.dir, 'dsh-plugin-upgrader', '1.1.1'), true)
+    const committed = withManifestLock(fixture.dir, () => {
+      const manifest = JSON.parse(readFileSync(join(fixture.dir, 'package.json'), 'utf8')) as {
+        dependencies: Record<string, string>
+      }
+      assert.equal(manifest.dependencies['dsh-plugin-upgrader'], '1.1.1')
+      manifest.dependencies['other'] = '^3.0.0'
+      writeFileSync(join(fixture.dir, 'package.json'), `${JSON.stringify(manifest, undefined, 2)}\n`, 'utf8')
+      return true
+    })
+    assert.equal(committed, true)
+    assert.equal(dependencyOf(fixture, 'dsh-plugin-upgrader'), '1.1.1', 'the entry survived the writer')
+    assert.equal(dependencyOf(fixture, 'other'), '^3.0.0', 'and the writer still got its own edit')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a confirmation of an entry that is already back does not wait on a locked profile', () => {
+  const fixture = profile()
+  try {
+    // pnpm writes the new version itself, so a success needs no manifest edit —
+    // but it still settles the record, which is a write, so it still needs the
+    // lock. Refusing is correct: the value is already on disk.
+    lockProfile(fixture.dir)
+    assert.equal(confirmDependency(fixture.dir, 'dsh-plugin-upgrader', nowait), false)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+/** The dependency range the fixture's manifest records for `name`. */
+function dependencyOf(fixture: { manifest: () => Record<string, unknown> }, name: string): string | undefined {
+  const dependencies = fixture.manifest()['dependencies'] as Record<string, string> | undefined
+  return dependencies?.[name]
+}

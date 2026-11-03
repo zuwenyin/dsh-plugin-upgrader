@@ -1,17 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  LOCK_BUSY,
   LOCK_FILE,
   describeWriterLock,
   explainLockTimeout,
   isWriterLockTimeout,
   pidIsAlive,
   readWriterLock,
+  withManifestLock,
 } from '../src/host/lock.ts'
+import { MANIFEST_FILE } from '../src/host/manifest.ts'
 
 /** The message `atomic-write` raises, with a path of its own. */
 const TIMEOUT =
@@ -25,6 +28,12 @@ function profile(): string {
 /** Write a lock whose record is `content`. */
 function holdLock(dir: string, content: string): void {
   writeFileSync(join(dir, LOCK_FILE), content, 'utf8')
+}
+
+/** A sleep that records how often it was asked to wait, and how long. */
+function recordedSleep(): { sleep: (ms: number) => void; calls: number[] } {
+  const calls: number[] = []
+  return { sleep: (ms: number) => void calls.push(ms), calls }
 }
 
 test('an absent lock is not a lock', () => {
@@ -134,4 +143,114 @@ test('an unknown profile still explains the timeout', () => {
   const explained = explainLockTimeout(TIMEOUT, undefined)
   assert.match(explained, /写入锁没有被释放/u)
   assert.ok(explained.includes(TIMEOUT))
+})
+
+test('the lock name is the one atomic-write derives from the manifest', () => {
+  // Spelled out in lock.ts to avoid an import cycle, so pin it here: if either
+  // file is renamed the lock would silently stop excluding the real writers.
+  assert.equal(LOCK_FILE, `${MANIFEST_FILE}.lock`)
+})
+
+test('an unlocked profile runs the body and leaves no lock behind', () => {
+  const dir = profile()
+  try {
+    const result = withManifestLock(dir, () => 'done')
+    assert.equal(result, 'done')
+    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'the lock is released')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the lock names this process while the body runs', () => {
+  const dir = profile()
+  try {
+    const seen = withManifestLock(dir, () => readFileSync(join(dir, LOCK_FILE), 'utf8'))
+    assert.equal(seen, `${process.pid}\n`)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a lock this very process holds is reported busy without waiting', () => {
+  const dir = profile()
+  try {
+    // The shape that cannot be waited out: atomic-write refuses to take over its
+    // own holder, so retrying would burn the whole budget and still fail.
+    holdLock(dir, `${process.pid}\n`)
+    const { sleep, calls } = recordedSleep()
+    assert.equal(withManifestLock(dir, () => 'ran', { sleep, waitMs: 5_000 }), undefined)
+    assert.equal(calls.length, 0, 'a self-held lock is not retried')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a foreign lock is retried and given up on at the deadline', () => {
+  const dir = profile()
+  try {
+    // A pid that is not running: still a held lock, because the file exists.
+    holdLock(dir, '4242\n')
+    const { sleep, calls } = recordedSleep()
+    const result = withManifestLock(dir, () => 'ran', { sleep, waitMs: 0, alive: () => false })
+    assert.equal(result, undefined)
+    assert.equal(calls.length, 0, 'no point sleeping past a deadline that already passed')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a foreign lock that clears up is taken, and the body is not run twice', () => {
+  const dir = profile()
+  try {
+    holdLock(dir, '4242\n')
+    const { calls } = recordedSleep()
+    let ran = 0
+    const result = withManifestLock(
+      dir,
+      () => {
+        ran += 1
+        return 'ran'
+      },
+      {
+        alive: () => false,
+        waitMs: 5_000,
+        // Release the lock on the second wait, as another process finishing up
+        // would; before that the first wait must not have touched the body.
+        sleep: (ms) => {
+          calls.push(ms)
+          if (calls.length === 2) rmSync(join(dir, LOCK_FILE), { force: true })
+        },
+      },
+    )
+    assert.equal(result, 'ran')
+    assert.equal(ran, 1)
+    assert.equal(calls.length, 2, 'two waits: the second one freed the lock')
+    assert.deepEqual(
+      calls,
+      [10, 20],
+      'the delay doubles between attempts instead of hammering the file',
+    )
+    assert.equal(existsSync(join(dir, LOCK_FILE)), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a body that throws still releases the lock', () => {
+  const dir = profile()
+  try {
+    assert.throws(() => withManifestLock(dir, () => {
+      throw new Error('boom')
+    }), /boom/u)
+    assert.equal(existsSync(join(dir, LOCK_FILE)), false, 'the lock is released on throw')
+    // And the profile is usable again, which is the point of releasing it.
+    assert.equal(withManifestLock(dir, () => 'after'), 'after')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('the busy sentence names the lock rather than the caller', () => {
+  assert.match(LOCK_BUSY, /writer lock/u)
 })

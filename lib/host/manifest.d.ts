@@ -1,3 +1,4 @@
+import type { ManifestLockOptions } from './lock.ts';
 /** Where a profile keeps its manifest. */
 export declare const MANIFEST_FILE = "package.json";
 /**
@@ -98,7 +99,7 @@ export type RecoveryResult = {
  * @param dir - the profile directory.
  * @returns what happened.
  */
-export declare function recoverPendingDrop(dir: string): RecoveryResult;
+export declare function recoverPendingDrop(dir: string, options?: ManifestLockOptions): RecoveryResult;
 /**
  * Forget the pending drop once the entry is visibly back.
  *
@@ -111,7 +112,7 @@ export declare function recoverPendingDrop(dir: string): RecoveryResult;
  * @param name - the package whose entry should be present.
  * @returns whether the entry was there, and the record therefore cleared.
  */
-export declare function confirmDependency(dir: string, name: string): boolean;
+export declare function confirmDependency(dir: string, name: string, options?: ManifestLockOptions): boolean;
 /**
  * Remove one dependency entry, leaving everything else untouched.
  *
@@ -119,7 +120,7 @@ export declare function confirmDependency(dir: string, name: string): boolean;
  * @param name - the package name to drop.
  * @returns what happened; `absent` means the guard cannot fire anyway.
  */
-export declare function dropDependency(dir: string, name: string): DropResult;
+export declare function dropDependency(dir: string, name: string, options?: ManifestLockOptions): DropResult;
 /**
  * Put a dropped entry back, for when the install did not reach pnpm.
  *
@@ -132,5 +133,5 @@ export declare function dropDependency(dir: string, name: string): DropResult;
  * @param spec - the dependency range to write back.
  * @returns whether the entry was restored.
  */
-export declare function restoreDependency(dir: string, name: string, spec: string): boolean;
+export declare function restoreDependency(dir: string, name: string, spec: string, options?: ManifestLockOptions): boolean;
 //# sourceMappingURL=manifest.d.ts.map

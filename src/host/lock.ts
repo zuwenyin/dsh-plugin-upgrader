@@ -23,13 +23,139 @@
  *
  * @module dsh-plugin-upgrader/lib/lock
  */
-import { readFileSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { MANIFEST_FILE } from './manifest.ts'
+/**
+ * The lock file's name, as `atomic-write` derives it.
+ *
+ * Spelled out rather than built from `manifest.ts`'s `MANIFEST_FILE` on purpose:
+ * `manifest.ts` imports this module, and a top-level `${MANIFEST_FILE}.lock` here
+ * would be evaluated before that constant exists. `test/lock.test.ts` pins the
+ * two together, so the spelling cannot drift unnoticed.
+ */
+export const LOCK_FILE = 'package.json.lock'
 
-/** The lock file's name, as `atomic-write` derives it. */
-export const LOCK_FILE = `${MANIFEST_FILE}.lock`
+/**
+ * How long a manifest edit waits for the writer lock before giving up.
+ *
+ * Short on purpose. Nobody is ever waiting for a *competing* read-modify-write
+ * to finish so much as checking that none is in flight: the caller has a correct
+ * answer when this returns `undefined` (fall back to the manager's own
+ * remove-then-install, which takes the lock itself), so waiting longer than a
+ * second would only make an upgrade look hung for a lock nobody is going to
+ * hand over inside that budget anyway.
+ */
+export const LOCK_WAIT_MS = 1_000
+
+/** First retry delay when the lock is contended; doubles up to `LOCK_RETRY_MAX_MS`. */
+const LOCK_RETRY_INITIAL_MS = 10
+
+/** Longest retry delay, matching `atomic-write`'s own backoff ceiling. */
+const LOCK_RETRY_MAX_MS = 200
+
+/** Why an edit could not start: the sentence callers put in a log line. */
+export const LOCK_BUSY = 'the profile writer lock is held by another operation'
+
+/**
+ * Block the thread for a moment.
+ *
+ * `Atomics.wait` rather than a timer: the manifest helpers are synchronous, and
+ * making them async to await `setTimeout` would ripple into every caller for no
+ * benefit — the only thing this sleep guards is a retry against a lock that is
+ * about to be released by another process.
+ *
+ * @param ms - how long to block.
+ */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/** Knobs for {@link withManifestLock}, all injectable so tests stay instant. */
+export interface ManifestLockOptions {
+  /** How long to keep retrying before giving up. */
+  waitMs?: number
+  /** How to pass time between retries. */
+  sleep?: (ms: number) => void
+  /** Liveness probe used to recognise a lock this very process holds. */
+  alive?: LivenessProbe
+}
+
+/**
+ * Run `body` while holding the profile's writer lock.
+ *
+ * The manifest edits in `manifest.ts` are read-modify-write cycles on a file the
+ * harness also rewrites. Doing them outside `package.json.lock` means a
+ * concurrent writer can read the manifest while an entry is temporarily dropped
+ * and then persist its own stale snapshot on top of the restore — the entry is
+ * gone, and because the restore had already cleared the journal there is nothing
+ * left for the next start to repair. Holding the same lock the manager holds
+ * closes that window: a competing operation either waits for us or keeps us out,
+ * never interleaves.
+ *
+ * **The lock is never taken over, however stale it looks.** A record whose pid is
+ * dead may still belong to a writer that is about to wake up, and the harness's
+ * own `atomic-write` already grew takeover logic for exactly that case. What this
+ * function must never do is delete a lock it did not create: returning `undefined`
+ * leaves the caller on the manager's own remove-then-install path, which is slower
+ * but always correct.
+ *
+ * A lock whose recorded pid is *this* process is the one shape that cannot be
+ * waited out: `atomic-write` refuses to take over its own holder, so a nested
+ * acquisition ends in a two-minute timeout rather than in the lock. It is also the
+ * shape a manager install has while pnpm runs, so it is reported as busy at once
+ * instead of being retried for a second.
+ *
+ * @param dir - the profile directory.
+ * @param body - the edit to perform while the lock is held.
+ * @param options - wait budget, sleep and liveness probe.
+ * @returns whatever `body` returned, or `undefined` when the lock was not ours.
+ */
+export function withManifestLock<T>(
+  dir: string,
+  body: () => T,
+  options: ManifestLockOptions = {},
+): T | undefined {
+  const lockPath = join(dir, LOCK_FILE)
+  const deadline = Date.now() + (options.waitMs ?? LOCK_WAIT_MS)
+  const sleep = options.sleep ?? sleepSync
+  const alive = options.alive ?? pidIsAlive
+  let delay = LOCK_RETRY_INITIAL_MS
+  for (;;) {
+    let fd: number
+    try {
+      fd = openSync(lockPath, 'wx', 0o600)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      // Any reason other than contention means this profile cannot be locked at
+      // all (read-only mount, permissions). Editing it anyway is the one thing
+      // that must not happen.
+      if (code !== 'EEXIST') return undefined
+      const holder = readWriterLock(dir, alive)
+      if (holder?.pid === process.pid) return undefined
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) return undefined
+      sleep(Math.min(delay, remaining))
+      delay = Math.min(delay * 2, LOCK_RETRY_MAX_MS)
+      continue
+    }
+    try {
+      writeFileSync(fd, `${process.pid}\n`, 'utf8')
+    } finally {
+      closeSync(fd)
+    }
+    try {
+      return body()
+    } finally {
+      try {
+        rmSync(lockPath, { force: true })
+      } catch {
+        // A lock this process could not remove only blocks later writers, who
+        // have their own fallback; failing the edit now would be worse.
+      }
+    }
+  }
+}
 
 /** What the lock says about its holder. */
 export interface WriterLock {
