@@ -692,4 +692,26 @@ test('a rollback that is refused says so instead of pretending', async () => {
   })
 })
 
+for (const failure of ['refused', 'thrown'] as const) {
+  for (const enabled of [false, true]) {
+    for (const current of [false, true]) {
+      test(`a ${failure} replacement restores enabled=${enabled} from enabled=${current}`, async () => {
+        const { manager, calls } = fakeManager({
+          installs: (call) => call === 0
+            ? refused('already-installed', 'install')
+            : failure === 'thrown' ? new Error('pnpm died') : refused('operation-error', 'install'),
+          bundles: [
+            { name: 'pkg', version: '1.0.0', installed: true, enabled: current, availability: 'profile', removable: true } as BundleInfo,
+          ],
+        })
 
+        const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0', enabled }, () => {})
+
+        assert.equal(outcome.ok, false)
+        assert.deepEqual(calls.remove, ['pkg'])
+        assert.equal(calls.install.length, 2, 'a package still on disk needs no reinstall')
+        assert.deepEqual(calls.enable, current === enabled ? [] : [{ name: 'pkg', enabled }])
+      })
+    }
+  }
+}

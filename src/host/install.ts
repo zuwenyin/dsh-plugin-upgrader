@@ -475,7 +475,12 @@ async function recover(
 ): Promise<boolean> {
   const entry = await bundleOf(manager, step.name)
   if (entry !== undefined && entry.installed !== false) {
-    await restoreSelection(manager, step.name, log)
+    if (step.enabled === false) {
+      // A failed upgrade must not activate a bundle the user kept disabled.
+      await restoreEnabledState(manager, step, false, log)
+    } else {
+      await restoreSelection(manager, step.name, log)
+    }
     return false
   }
   if (previous === undefined) {
