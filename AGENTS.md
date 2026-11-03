@@ -613,6 +613,53 @@ instead of pretending`。把预检条件改成 `&& false` 时第一条必须红�
 
 ---
 
+## 21. 失败的升级不许把「关着的插件」打开
+
+**不可退化。** PR #2（HootRock）修的真实问题：一个用户把某个插件关掉、点了升级，
+升级失败，插件却**变成启用**了。用户没有要求它跑，一次失败的操作反而改了它的运行状态。
+
+根因不在安装本身，在恢复路径。`recover()` 面对「包还在盘上、但被取消了选中」时
+只有一个动作：`restoreSelection()`，而它的名字是准确的、行为是写死的——它**只会**
+`setBundleEnabled(name, true)`。取消选中是 `removeBundle` 干的（换版本必须先卸载），
+所以失败的步骤必然经过这个窗口；成功路径上那句 `restoreEnabledState(..., step.enabled)`
+（`src/host/install.ts:778`）在失败时被 `installed` 判断跳过，于是这个窗口里
+**唯一**的修复动作就是「打开它」。
+
+- **恢复要按「这一步想要什么」修，不是按「盘上有什么」修。** 包还在盘上只说明不用重装，
+  说明不了它该不该跑。`step.enabled === false`（用户明确要求关着）时走
+  `restoreEnabledState(manager, step, false, log)`，它按目标状态对齐：读到已经关着就
+  什么都不做，读到还开着就关下去。
+- **`undefined` 仍然等于「保持加载」。** 只在**明确** `=== false` 时改走另一条路：
+  没带这个字段的调用方（老客户端、脚本）没有表达「请关掉它」，把它们当成「关」会把
+  一次失败变成一次停用。这与 `src/host/install.ts:633` 用 `typeof step.enabled === 'boolean'`
+  决定要不要把 `enabled` 传给 manager 是同一条约定。
+- **两条路都要留着。** `restoreSelection` 的日志
+  `re-select <name> (a failed replacement must not leave it unloaded)` 是「为什么又把它选回来」
+  的唯一说明；把它合并成一句 `restoreEnabledState(..., step.enabled ?? true, ...)` 会让
+  这句话消失，`test/install.test.ts` 的三条老用例（`:371`、`:401`、`:646`）也会一起失效。
+  合并不是错，但那样就没人解释「包本来就在，为什么还要动它」了。
+- **两条失败形状都要覆盖。** manager 返回错误（`result.error`）和 `installBundle` 直接
+  抛出（pnpm 死掉）走的是同一个 `recover()`，所以修复对两者同时生效；只测其中一种，
+  另一种回归时看不出来。
+- **in-place 路径从来不受影响。** `replaceWithoutRemoval` 成功时在
+  `src/host/install.ts:575` 用的是 `restoreEnabledState(..., options.enabled)`，本来就是
+  按目标状态对齐的。这个 bug 只住在「卸载之后又失败」这一条路上。
+
+**代码：** `src/host/install.ts:473` `recover`（`:490` 的分支）、`:316` `restoreEnabledState`、
+`:363` `restoreSelection`、`:633` `restoreEnabled` 的取值、`:778` 成功路径的恢复。
+
+**守护：** `test/install.test.ts` 的五条 —— `a failed upgrade leaves a plugin that was
+switched off switched off`（断言 `calls.enable` 为空且日志里没有 `re-select`）、
+`a thrown install after the removal keeps that state too`、`a failed upgrade switches off
+a plugin the manager reports as loaded`（断言 `{ name: 'pkg', enabled: false }`，即目标状态
+优先于当前状态）、`a failed upgrade still puts back a plugin the step wanted loaded`、
+`a failed upgrade does not toggle a plugin that is already on`。把 `recover` 里那行改回
+无条件 `restoreSelection` 时前三条必须红；把分支改成
+`restoreEnabledState(..., step.enabled, ...)`（丢掉 `undefined` 的旧语义）时上面三条老的
+`re-select` 用例必须红（两者都实测过）。
+
+---
+
 ## 改完必须做的事
 
 ```bash
