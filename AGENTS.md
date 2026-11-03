@@ -446,16 +446,23 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
   （`hostinfo.ts:44` `DESKTOP_ENTRY`、`:57` `hostKindOf`）。
 - **pid 是这条链路唯一有意义的信号**，而且**每次现算**（`src/index.ts:477` 用
   `Date.now() - process.uptime()*1000`，不缓存）：缓存会让一次真的重启看起来像卡住。
-  页面每秒问一次，直到 pid 变了才往下走（`RestartDialog.ts:24` `PROBE_MS = 1000`）。
-- 确认重启之后的刷新**必须**走 `reloadWhenBootDocumentFresh`（§4），不要换成
+  页面每秒问一次，直到 pid 变了才往下走（`RestartDialog.ts` `PROBE_MS = 1000`）。
+- **确认重启之后的刷新**必须走 `reloadWhenBootDocumentFresh`（§4），不要换成
   `location.reload()`：新的宿主可能已经轮换到这一页加载不了的那一代 batch。
-- 等待**封顶两分钟**（`RestartDialog.ts:32` `WAIT_LIMIT_MS = 120_000`），超了说「宿主还没换新
-  进程」，而不是一直转圈。
-- **关掉对话框必须停掉轮询。** timer 放在 `timerRef` 里，unmount 时清掉
-  （`RestartDialog.ts:62`）：否则关掉之后它仍会继续问，并在你离开很久之后 reload 页面。
+- **等待是自动开始的，按钮只是「再查一次」。** 对话框拿到 pid 就立刻开等，不等用户点；
+  按钮写成「重新检查」而不是「重启好了，刷新页面」——后者读起来像「按它就是重启」，
+  而这个页面从来没有那个能力（`RestartDialog.ts` 的 `beginWaitRef` / `checkAgain`）。
+- **两分钟是「不再声称在等」，不是「停止等待」**（`RestartDialog.ts` `WAIT_LIMIT_MS = 120_000`）。
+  退出再打开 DSH 要花多久由人决定，超时把人赶进死胡同、还得回来按按钮，是最没道理的
+  那种失败。超时后转 `idle` 说一句「还没换新进程——重新打开 DSH 后这一页会自己刷新」，
+  **timer 继续跑**；pid 一变照样自动 reload。判断规则抽在 `probeVerdict`：
+  pid 变了就是重启（多晚都算）、pid 读不到不算重启、deadline 只报告不终止。
+- **关掉对话框必须停掉轮询。** timer 放在 `timerRef` 里，unmount 时清掉：否则关掉之后
+  它仍会继续问，并在你离开很久之后 reload 页面。同理 `beginWaitRef` 在 effect 里赋值，
+  不在渲染期间写 ref。
 - **「卡住了」有两种，不能合并成一句。** pid 没变（旧进程还在）和 pid 变了但页面刷不动
   （`restartReloadBlocked`）都会落到 `stalled`，但前者叫人「再确认旧进程退出」，后者叫人
-  「再重启一次 DSH」。所以 `stalled` 渲染的是 `problem`（`RestartDialog.ts:224`），
+  「再重启一次 DSH」。所以 `stalled` 渲染的是 `problem`（`stalledMessage`），
   只有 `problem` 为空才用 `restartStillOld`——把「宿主已重启」说成「还没换新进程」
   会把人引到错误的方向。
 - 文案里不许说页面能重启宿主（`copy.ts` 的 `restartBody` 中英都写明了做不到）。
@@ -465,8 +472,9 @@ Release 只有 6 个，页面停在 `v1.2.0`，而 npm 已经发到 `v1.6.1`。
 的 `restart*` 一组、`src/client/styles.ts` 的 `.dsh-pu-cmdbox` / `.dsh-pu-cmd`。
 
 **守护：** `test/hostinfo.test.ts`（10 条）、`test/copy.test.ts`（3 条）、
-`test/restart-dialog.test.ts`（3 条：无理由时说「还没换新进程」、有理由时原样保留、
-只有空白也算没有理由）。
+`test/restart-dialog.test.ts`（8 条：无理由时说「还没换新进程」、有理由时原样保留、
+只有空白也算没有理由；pid 变了多晚都算重启、pid 没到点继续等、读不到不算重启、
+deadline 只报告不终止）。
 
 ---
 

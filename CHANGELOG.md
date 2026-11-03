@@ -52,6 +52,12 @@
   rejecting (a keep-alive socket closed under a long install) leaked out of the loop
   entirely for the same reason. Polls now retry up to four times in a row, and a good poll
   resets the count, so it takes ~3 s of real silence to give up.
+- **The restart dialog watches by itself instead of asking for a click.** Its main button
+  said "restarted — reload the page", which read as if pressing it *were* the restart; it
+  never was. The wait now starts as soon as the dialog knows the pid, and the deadline only
+  stops it *claiming* to wait — quitting and reopening DSH takes as long as the person
+  takes, and a restart that lands after two minutes is still a restart. The button is now
+  "check again", disabled while a wait is running, and pressing it is never required.
 
 ## 1.6.3 — 2026-11-02
 
