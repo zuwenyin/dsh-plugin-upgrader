@@ -132,7 +132,7 @@ pnpm 根本不会跑。所以换版本的顺序是：
 > `profileDirFrom()` 只认 `DSH_PROFILE_DIR` / `DSH_HOME` + `DSH_PROFILE`，而桌面壳启动宿主时
 > 不导出这些变量（它直接把 profile 目录当作子进程的 cwd），于是第 2 步第一行就放弃了，
 > 每次升级都悄悄走 remove + install。1.4.1 加了 cwd 回退之后才真正走这条路。
-> 细节见 [AGENTS.md](./AGENTS.md) 第 2 条。
+> 细节见 [AGENTS.md](./AGENTS.md) 第 2 条「换版本时**不先卸载**」。
 
 ### 升级中断后 profile 还能自己长回来
 
@@ -268,6 +268,9 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 - **升级失败**：in-place 替换会先把被摘掉的依赖记进 journal，失败就还原；进程被杀掉时，
   下次加载会把依赖补回去。还原时拿不到锁就保留 journal 等下次，不会先把记录清掉。
   失败了插件仍在、启用状态仍在。
+- **还原了但没激活**：旧版本装回磁盘、宿主却没把它加载起来时，会明确说「文件在盘上，
+  去『已安装』里重新启用」，而不是说「没装、去重装一遍」（重装只会得到 `already-installed`）。
+  只有插件真的跑起来了，才算「已还原」。
 - **registry 读不到 / GitHub 限流 / 离线**：都降级成「这一项读不到 + 原因 + 重试入口」，
   不会伪装成「没有新版本」「没有历史版本」。
 
@@ -312,7 +315,8 @@ DSH 在装插件时会检查插件声明的 DSH 要求，不满足就**拒绝安
 
 ```
 dsh-plugin-upgrader/
-├── AGENTS.md             **改代码前先读**：不可退化的行为 + 守护测试
+├── AGENTS.md             **改代码前先读**：判据 + 守护测试，每条指向 docs/rules/ 的详证
+├── docs/rules/           每条规则的详证页（事故现场、行号核对、原文存档；按需读，不自动加载）
 ├── src/                  源码（TypeScript）
 │   ├── index.ts          宿主端入口：路由注册、job 调度、加载时恢复 manifest
 │   ├── host/             宿主端逻辑（Node，无 DOM）
@@ -332,7 +336,7 @@ dsh-plugin-upgrader/
 │       ├── index.ts      createPlugin(require)：槽位注册入口
 │       ├── components/   Tab / PluginRow / VersionLine / JobPanel / SourceDialog
 │       ├── registry.ts   读写安装源设置、可选源列表的增删改
-│       ├── boot.ts       reload 前确认 boot 文档还有效（见 AGENTS.md 第 4 条）
+│       ├── boot.ts       reload 前确认 boot 文档还有效（见 AGENTS.md 第 4 条「不能 reload 进一个已经不存在的 boot 文档」）
 │       ├── copy.ts       zh / en 文案
 │       ├── styles.ts     作用域 CSS
 │       ├── hooks.ts      locale 订阅、overview 拉取、外观插件判定
@@ -340,7 +344,7 @@ dsh-plugin-upgrader/
 │       ├── format.ts     版本号 / 日期 / 外部链接
 │       ├── env.ts        window 上的最小类型声明
 │       └── types.ts      载荷类型
-├── lib/                  构建产物（**已提交**，见 AGENTS.md 第 13 条）
+├── lib/                  构建产物（**已提交**，见 AGENTS.md 第 13 条「`lib/` 是提交进仓库的」）
 │   ├── index.js          宿主端入口（tsc 输出）
 │   ├── host/*.js         宿主端模块 + .d.ts
 │   └── client.js         浏览器端单文件 bundle（含 __ModuleLoader__ 包装）
@@ -375,11 +379,13 @@ pnpm run check     # 以上全部（typecheck + build + test + pack 检查 + 产
 `lib/` 是**提交进仓库**的，不是构建垃圾：DSH Store 审核固定 commit，不会为了补齐
 运行时文件去执行 `prepare`。所以 `pnpm install` 不再触发构建（安装期脚本会被审核
 直接否决），构建挂在 `prepack` 上；改完 `src/` 必须 `pnpm run build` 并把 `lib/`
-一起提交，`pnpm run check` 会替你核对。详见 [AGENTS.md](./AGENTS.md) 第 13 条。
+一起提交，`pnpm run check` 会替你核对。详见 [AGENTS.md](./AGENTS.md) 第 13 条
+「`lib/` 是提交进仓库的，不是构建垃圾」。
 
 **改任何代码前先读 [AGENTS.md](./AGENTS.md)。** 那里列的是「已经实现、不能再退回」的行为，
-每条都附了代码位置和守护它的测试名；`pnpm run check` 全绿只说明没写坏，不说明没改坏
-（很多行为没有对应测试，比如「自己那一行不出现在批量升级里」之外的边界情形）。
+每条都附了涉及的符号、守护它的测试名，以及一个 `docs/rules/` 详证页；`pnpm run check` 全绿
+只说明没写坏，不说明没改坏（很多行为没有对应测试，比如「自己那一行不出现在批量升级里」
+之外的边界情形）。
 
 新增或修改测试后，问一句：**这个测试真的会红吗？** 把被测的字符串或分支临时改成哨兵值
 再跑一次，确认它失败，然后改回来。不会失败的测试等于没写。

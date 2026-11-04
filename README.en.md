@@ -157,7 +157,8 @@ better than slipping an edit into somebody else's read-modify-write and losing t
 > `DSH_PROFILE`, and the desktop shell exports none of them (it starts the host with
 > the profile directory as its working directory), so step 2 bailed on its first line
 > and every upgrade quietly took the remove + install path. 1.4.1 added the working
-> directory fallback. See item 2 of [AGENTS.md](./AGENTS.md).
+> directory fallback. See item 2 of [AGENTS.md](./AGENTS.md), "replacing a version does
+> **not** uninstall first".
 
 ### An interrupted upgrade repairs itself
 
@@ -320,6 +321,10 @@ are development-time only and are not part of the published tarball's runtime.
   removing it and restores it on failure; a killed process is repaired on the next
   load. A restore that cannot take the lock keeps the record instead of clearing it,
   so the next load repairs it. The plugin stays installed and keeps its enabled state.
+- **A rollback that lands but cannot activate** is reported as exactly that: the old
+  version is back on disk, the host did not load it, and the panel tells you to
+  re-enable it from the Installed tab instead of installing it again (which would
+  return `already-installed`). "Rolled back" is only claimed when the plugin runs.
 - **Unreachable registry, rate-limited GitHub, offline**: every one of them degrades to
   "this one thing could not be read, here is why, retry", never to a silent "no new
   version" or "no version history".
@@ -373,6 +378,9 @@ only semantics needed here are the `includePrerelease` ones.
 
 ```
 dsh-plugin-upgrader/
+├── AGENTS.md             **read before changing code**: the rules plus their guard tests
+├── docs/rules/           one detail page per rule (the incidents, line audits, archived text;
+│                         read on demand — never auto-loaded)
 ├── src/                  sources (TypeScript)
 │   ├── index.ts          host entry: route registration, job scheduling
 │   ├── host/             host-side logic (Node, no DOM)
@@ -394,7 +402,7 @@ dsh-plugin-upgrader/
 │       ├── format.ts     versions / dates / external links
 │       ├── env.ts        minimal window typings
 │       └── types.ts      payload types
-├── lib/                  build output (**committed**, see AGENTS.md §13)
+├── lib/                  build output (**committed**, see AGENTS.md §13, "lib/ is committed")
 │   ├── index.js          host entry (tsc output)
 │   ├── host/*.js         host modules plus .d.ts
 │   └── client.js         the browser bundle, wrapped in __ModuleLoader__
@@ -431,7 +439,8 @@ pnpm run check     # all of the above, plus the pack check and the build-committ
 will not run `prepare` to fill in missing runtime files. So `pnpm install` no longer
 builds (install-time scripts are an automatic rejection in that review) and the build
 hangs off `prepack`; after editing `src/` you must `pnpm run build` and commit `lib/`
-with it, which `pnpm run check` verifies. See [AGENTS.md](./AGENTS.md) §13.
+with it, which `pnpm run check` verifies. See [AGENTS.md](./AGENTS.md) §13, "`lib/` is
+committed, not build litter".
 
 The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the

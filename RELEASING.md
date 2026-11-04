@@ -91,10 +91,9 @@ pnpm view dsh-plugin-upgrader version dist.tarball --registry https://registry.n
 
 点 **Set up connection** 保存。
 
-`publish.yml` 里现在有两个 job：`publish`（发 npm）和 `release`（建 GitHub Release 页面）。
-trusted publisher 认的是**文件名**，所以这个文件后续再加 job 都不用动这里——但把文件改名、
-或者把发布挪到别的 workflow 里，就必须回来改这一栏，否则会拿到
-`404 — the token exchange failed`。
+trusted publisher 认的是 **workflow 文件名**（`publish.yml`），不是里面某个 job，所以这个文件
+后续再加 job 都不用动上面那一栏——但把文件改名、或者把发布挪到别的 workflow 里，就必须回来改
+这一栏，否则会拿到 `404 — the token exchange failed`。
 
 建议顺手打开 **Require two-factor authentication and disallow tokens**，
 这样以后只能从 CI 发布，token 泄了也发不了包。
@@ -151,10 +150,21 @@ gh release list --repo zuwenyin/dsh-plugin-upgrader --limit 3
 
 结果是：git tag 有 15 个，GitHub Release 只有 6 个，页面停在 v1.2.0，而 npm 已经发到
 v1.6.1。GitHub 的 "Latest" 认的是**最新的 Release**，不是最新的 tag，于是项目看起来在 1.2.0
-就死了。本插件行上的 `GH` 按钮、以及每个历史版本号上的链接，点进去都是一页空白外壳。
+就死了。本插件行上的 `GH` 按钮、以及每个历史版本号上的链接（`releasePathOf`），都会打开
+`releases/tag/v<版本>`——tag 在，所以链接不坏，但点进去是一页空白外壳，比 404 更像 bug。
 
-所以这件事现在是自动的：`publish.yml` 里 `publish` 成功之后跑一个 `release` job，
-`gh release create --verify-tag`。手工步骤只要没人检查，就等于没有。
+所以这件事现在是自动的，而且不是一个「记得去跑」的步骤：`publish.yml` 里有**两个 job**，
+`publish` 发 npm，`release` 建页面。手工步骤只要没人检查，就等于没有。
+
+- **顺序是功能的一部分。** `release` 声明了 `needs: publish`，所以在 `publish` 成功之后才跑：
+  一次失败的发布不会留下一页宣告 registry 上并不存在的版本。把这个依赖去掉，就等于允许页面
+  先于包存在。
+- **`gh release create --verify-tag` 也是功能的一部分。** tag 不在时直接失败，而不是建一个
+  悬空的 Release——页面描述的必须是那个真的被打上 tag 的 commit。
+- **不要把这个 job 改回手工步骤。** 也不要给它加 `continue-on-error`——那等于把「忘了建
+  Release」重新变成一个看不见的失败。
+- **在分支上手动跑不建页面。** `release` job 带
+  `if: startsWith(github.ref, 'refs/tags/')`：在分支上跑没有 tag 可描述，跳过是对的。
 
 正文来自 `scripts/release-notes.mjs`，顺序是：
 
@@ -164,7 +174,18 @@ v1.6.1。GitHub 的 "Latest" 认的是**最新的 Release**，不是最新的 ta
    只是读起来像 changelog。
 
 两边都没有这个版本时脚本**退出 1**，job 变红。这是故意的：一页没有内容的 Release 比没有
-Release 更难排查。
+Release 更难排查。别把它和另一种失败混起来——**没给版本号**（或给了空白）时脚本退出的是 2 并
+打印 `usage:`，那是参数写错了，不是「哪里都找不到正文」。
+
+版本号按**整词**匹配：`1.6` 不会匹到 `1.6.0`/`1.6.10`，`1.0.1` 也不会匹到 `1.0.10`。这条不是
+洁癖——发 `1.0.1` 时若按前缀匹配，页面会贴出 `1.0.10` 的正文，而那是最难发现的一类错
+（页面有内容、看起来正常、说的是另一个版本）。
+
+选正文的规则由 `test/release-notes.test.ts` 的 8 条用例钉住（章节到下一个 `##` 为止、版本号
+整词匹配、`v` 前缀等价、没有章节时返回 `undefined` 而不是空串、自写说明优先于 CHANGELOG、
+`v<版本>.md` 也能找到、空的自写说明不遮蔽 CHANGELOG、两边都没有时不产出正文）。
+改 `scripts/release-notes.mjs` 之前先跑它；它旁边那份 `scripts/release-notes.d.mts` 是给测试用的
+类型声明，改导出时要一起对。
 
 本机想预览正文：
 

@@ -10,7 +10,7 @@ Thumbs.db
 # Scratch space for the headless render harness (screenshots, fixtures).
 .probe/
 
-# Build output is COMMITTED on purpose — see AGENTS.md section 12.
+# Build output is COMMITTED on purpose — see AGENTS.md, "`lib/` is committed, not build litter".
 # The DSH Store reviews a fixed commit and refuses to run `prepare` to fill in
 # missing runtime files, so `lib/` has to be in the tree. Never edit it by hand;
 # run `pnpm run build` and commit the result together with the sources.
