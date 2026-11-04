@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7.4 — 2026-11-04
+
+- **The package description never contained the word "DSH", and that is why npm could not
+  find it.** Searching `dsh-plugin` on npm returns 302,030 results and this package sat at
+  368, behind packages with a tenth of its downloads; `plugin manager` and `dsh` did not
+  list it in the first 750 at all. The registry's relevance score has nothing to do with
+  downloads here — every candidate in the top 500 scores `popularity: 1, quality: 1,
+  maintenance: 1`, so the whole difference is text matching. Splitting those 500 by
+  whether the description contains the standalone token `dsh`: 459 that do score a median
+  of 118.3, 40 that do not score a median of 103.0, and this package was one of the latter
+  (103.05) because it spelled out "DeepSeek Harness" and never wrote "DSH". Holding
+  description length constant (10–26 words) keeps the gap (123.9 vs 112.9), so it is the
+  word and not the length; keyword count makes no difference at all (`@jieai/dsh-plugin-vet`
+  carries 32 keywords and scores 93.9). The description and keywords are now written to
+  match how people search, and the same trap is worth knowing about: `dsh-plugin-ops`,
+  `dsh-plugin-shop` and `@loongsuite/dsh-plugin` all score ~103 for the same reason.
+
 ## 1.7.3 — 2026-11-04
 
 - **One pending-drop record per profile was not enough for a batch.** 1.7.1 put the profile

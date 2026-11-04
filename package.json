@@ -1,13 +1,18 @@
 {
   "name": "dsh-plugin-upgrader",
-  "version": "1.7.3",
-  "description": "One-click upgrades, version history and rollback for plugins on the DeepSeek Harness Plugins page",
+  "version": "1.7.4",
+  "description": "DSH plugin for DeepSeek Harness: upgrade plugins from the Plugins page, version history, rollback, live pnpm progress",
   "keywords": [
     "dsh",
     "dsh-plugin",
+    "deepseek",
     "deepseek-harness",
+    "harness",
+    "cordis",
     "plugin-manager",
-    "version-manager"
+    "version-manager",
+    "upgrade",
+    "rollback"
   ],
   "license": "MIT",
   "author": "zuwenyin",
