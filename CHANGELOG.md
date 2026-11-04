@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.7.3 — 2026-11-04
+
+- **One pending-drop record per profile was not enough for a batch.** 1.7.1 put the profile
+  edit inside the harness's writer lock, which stopped a concurrent writer from erasing a
+  restored entry. The journal underneath it was still a *single* record: if a step dropped
+  a dependency and could not put it back (the writer lock was busy, so neither the restore
+  nor the remove-and-reinstall fallback could run), the record kept naming that package —
+  and the *next* step of the same batch overwrote it on its own drop, then wiped the file
+  when its install landed. A package could therefore go missing from `package.json` with
+  `recoverPendingDrop` reporting `{ kind: 'none' }`, i.e. nothing left to repair. The
+  journal is now `{ version: 2, records: [...] }` with **one record per package**:
+  `upsertRecord` replaces only its own name, `clearRecord(dir, name)` settles only its own
+  name, and recovery walks every record instead of the first one. A journal written by an
+  earlier version (a bare `{ name, spec, at }` object) is still read, so a profile that was
+  interrupted mid-upgrade stays repairable across the update.
+- **The journal is read, edited and cleaned inside the lock.** `recoverPendingDrops` used to
+  read the record *before* taking `package.json.lock`, so it could act on a record another
+  writer had already settled. The unlocked read now only decides whether there is anything
+  to do and which names to report when the lock is busy; every decision is taken from a
+  fresh read inside `withManifestLock`.
+- **A restore that could not run now says so.** `replaceWithoutRemoval`'s throw path used to
+  discard the result of `restoreDependency`, so the log claimed nothing either way; both
+  failure paths now end with `the next start repairs it` when the entry could not be put
+  back — which, with per-package records, is now actually true.
+
 ## 1.7.2 — 2026-11-03
 
 - **A slow install now says what it is actually doing.** Downgrading a plugin used to sit

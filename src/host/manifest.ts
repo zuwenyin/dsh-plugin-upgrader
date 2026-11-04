@@ -21,7 +21,7 @@
  *
  * @module dsh-plugin-upgrader/lib/manifest
  */
-import { readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { ManifestLockOptions } from './lock.ts'
@@ -31,7 +31,7 @@ import { LOCK_BUSY, withManifestLock } from './lock.ts'
 export const MANIFEST_FILE = 'package.json'
 
 /**
- * Where a pending drop is recorded, next to the manifest it belongs to.
+ * Where pending drops are recorded, next to the manifest they belong to.
  *
  * The drop has to survive a crash to be undoable. Writing the intent to disk
  * before the entry disappears means the next process to load this plugin can
@@ -39,6 +39,12 @@ export const MANIFEST_FILE = 'package.json'
  * it no longer lists — which is how a failed upgrade lost a theme: pnpm spent
  * two minutes verifying a lockfile, the app was restarted, and the dependency
  * entry was never written back.
+ *
+ * The file holds one record **per package**. One record for the whole profile is
+ * what made a batch lose a plugin: a step that failed could not restore its
+ * entry, the next step's drop overwrote the only record, and that step's success
+ * then cleared it. The record the first step depended on was gone, and the next
+ * load found nothing to repair.
  */
 export const JOURNAL_FILE = 'package.json.upgrader-journal.json'
 
@@ -51,6 +57,17 @@ export interface DropJournal {
   /** When the drop happened; only ever used for diagnostics. */
   at: number
 }
+
+/** The on-disk shape of the journal: a set of records keyed by package name. */
+interface JournalEnvelope {
+  /** Bumped when the shape changes; `2` is the per-package set. */
+  version: number
+  /** One record per package whose entry is currently missing. */
+  records: DropJournal[]
+}
+
+/** The version this module writes. */
+const JOURNAL_VERSION = 2
 
 /**
  * Resolve the profile directory the running host is managing.
@@ -142,20 +159,67 @@ function writeManifest(dir: string, manifest: Record<string, unknown>): void {
 }
 
 /**
- * Record that an entry is about to disappear, before it disappears.
+ * Read every pending drop from the journal.
+ *
+ * Two shapes are accepted. The current one is an envelope with a `records`
+ * array; the older one was a single bare record, which a profile upgraded from
+ * an earlier version may still carry. Reading the old shape as a one-record set
+ * means an interrupted upgrade from before this change is still repaired.
+ *
+ * @param dir - the profile directory.
+ * @returns the records, newest last; empty when there is nothing to read.
+ */
+function readRecords(dir: string): DropJournal[] {
+  let raw: string
+  try {
+    raw = readFileSync(join(dir, JOURNAL_FILE), 'utf8')
+  } catch {
+    return []
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return []
+  const envelope = parsed as Partial<JournalEnvelope>
+  const candidates = Array.isArray(envelope.records) ? envelope.records : [parsed]
+  const records: DropJournal[] = []
+  for (const candidate of candidates) {
+    if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) continue
+    const record = candidate as Partial<DropJournal>
+    if (typeof record.name !== 'string' || record.name === '') continue
+    if (typeof record.spec !== 'string') continue
+    records.push({ name: record.name, spec: record.spec, at: typeof record.at === 'number' ? record.at : 0 })
+  }
+  return records
+}
+
+/**
+ * Persist the whole record set, or the empty state.
  *
  * Written with the same temp-then-rename dance as the manifest: a half-written
  * journal would be worse than none, because recovery trusts it.
  *
  * @param dir - the profile directory.
- * @param journal - what is being dropped.
- * @returns whether the record reached the disk.
+ * @param records - the records to keep; an empty set removes the file.
+ * @returns whether the write reached the disk.
  */
-function writeJournal(dir: string, journal: DropJournal): boolean {
+function writeRecords(dir: string, records: DropJournal[]): boolean {
   const target = join(dir, JOURNAL_FILE)
+  if (records.length === 0) {
+    try {
+      rmSync(target, { force: true })
+      return true
+    } catch {
+      return false
+    }
+  }
   const temporary = `${target}.upgrader-tmp`
+  const envelope: JournalEnvelope = { version: JOURNAL_VERSION, records }
   try {
-    writeFileSync(temporary, `${JSON.stringify(journal, undefined, 2)}\n`, 'utf8')
+    writeFileSync(temporary, `${JSON.stringify(envelope, undefined, 2)}\n`, 'utf8')
     renameSync(temporary, target)
     return true
   } catch {
@@ -169,44 +233,63 @@ function writeJournal(dir: string, journal: DropJournal): boolean {
 }
 
 /**
- * Forget the pending drop.
+ * Add or replace one package's record, leaving every other record alone.
  *
- * Called once the entry is back, or once pnpm has written a new version in its
- * place — either way there is nothing left to undo.
+ * @param dir - the profile directory.
+ * @param journal - the record to store.
+ * @returns whether the record reached the disk.
+ */
+function upsertRecord(dir: string, journal: DropJournal): boolean {
+  const kept = readRecords(dir).filter((record) => record.name !== journal.name)
+  return writeRecords(dir, [...kept, journal])
+}
+
+/**
+ * Forget one package's pending drop, leaving every other record alone.
+ *
+ * Dropping the whole file is what lost a plugin in a batch: one step's record
+ * was the only thing that knew a different step's entry had gone missing.
+ *
+ * @param dir - the profile directory.
+ * @param name - the package whose record is settled.
+ */
+function clearRecord(dir: string, name: string): void {
+  const records = readRecords(dir)
+  const kept = records.filter((record) => record.name !== name)
+  if (kept.length === records.length && records.length > 0) return
+  writeRecords(dir, kept)
+}
+
+/**
+ * Forget every pending drop.
+ *
+ * Kept because the journal is a whole file and a caller may legitimately want it
+ * gone (tests, and a profile being reset). Nothing in the upgrade path uses it:
+ * there, records are settled one package at a time.
  *
  * @param dir - the profile directory.
  */
 export function clearJournal(dir: string): void {
-  try {
-    rmSync(join(dir, JOURNAL_FILE), { force: true })
-  } catch {
-    // A journal that cannot be removed only causes one more no-op recovery.
-  }
+  writeRecords(dir, [])
 }
 
 /**
  * Read the pending drop, when one is recorded.
  *
+ * Without a name this reports the first record, which is enough for diagnostics
+ * and for the single-record cases; with a name it reports that package's record.
+ * The upgrade path never decides anything from this — it works from
+ * {@link readRecords} inside the lock — so this is not where a stale record can
+ * be acted on.
+ *
  * @param dir - the profile directory.
+ * @param name - the package to read, or omitted for the first record.
  * @returns the record, or `undefined` when there is none to read.
  */
-export function readJournal(dir: string): DropJournal | undefined {
-  let raw: string
-  try {
-    raw = readFileSync(join(dir, JOURNAL_FILE), 'utf8')
-  } catch {
-    return undefined
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
-    const record = parsed as Partial<DropJournal>
-    if (typeof record.name !== 'string' || record.name === '') return undefined
-    if (typeof record.spec !== 'string') return undefined
-    return { name: record.name, spec: record.spec, at: typeof record.at === 'number' ? record.at : 0 }
-  } catch {
-    return undefined
-  }
+export function readJournal(dir: string, name?: string): DropJournal | undefined {
+  const records = readRecords(dir)
+  if (name === undefined) return records[0]
+  return records.find((record) => record.name === name)
 }
 
 /** What a recovery pass did, for the caller to report. */
@@ -217,15 +300,20 @@ export type RecoveryResult =
   | { kind: 'failed'; name: string; reason: string }
 
 /**
- * Undo a drop whose install never finished.
+ * Undo every drop whose install never finished.
  *
  * This is the crash repair. A drop writes its intent to the journal before the
  * entry leaves the manifest, so whichever process loads the plugin next can see
- * that an entry is missing and put it back. Two outcomes are possible:
+ * that an entry is missing and put it back. For each record two outcomes are
+ * possible:
  *
  *   - the entry is still absent, so pnpm never wrote the new version: restore it;
  *   - the entry is present, so the install landed and simply outlived the drop
  *     record: forget the record and leave the manifest alone.
+ *
+ * Every record is repaired, not just one: a batch whose first step failed leaves
+ * its record behind while the later steps run, and the profile is only whole
+ * again once all of them have been settled.
  *
  * Doing this at load time rather than at next upgrade matters: a profile with a
  * package on disk and no dependency entry is invisible to the manager, so the
@@ -233,26 +321,74 @@ export type RecoveryResult =
  * hand.
  *
  * @param dir - the profile directory.
- * @returns what happened.
+ * @param options - lock budget; tests pass a zero wait.
+ * @returns one result per record, in the order the records were written.
+ */
+export function recoverPendingDrops(dir: string, options?: ManifestLockOptions): RecoveryResult[] {
+  /*
+   * Read once without the lock, for two things only: skipping the lock entirely
+   * when nothing is pending, and naming what was left undone if the lock is
+   * held. Neither acts on a record. The repair below re-reads the journal inside
+   * the lock, so a record that changed in between is seen at its current value.
+   */
+  const pending = readRecords(dir)
+  if (pending.length === 0) {
+    /*
+     * Nothing readable is pending — but there might still be a file, left behind
+     * corrupt or emptied by an older version. Removing it is what keeps a
+     * profile from carrying a record nobody can act on forever.
+     */
+    if (existsSync(join(dir, JOURNAL_FILE))) withManifestLock(dir, () => writeRecords(dir, []), options)
+    return []
+  }
+  const applied = withManifestLock(dir, () => undoDrops(dir), options)
+  if (applied !== undefined) return applied
+  /*
+   * Somebody is rewriting the manifest right now. Leaving the records alone is
+   * the whole point: the next load will try again, and a repair that raced a
+   * live writer is exactly how an entry ends up lost for good.
+   */
+  return pending.map((record) => ({ kind: 'failed', name: record.name, reason: LOCK_BUSY }) as const)
+}
+
+/**
+ * Undo one drop, reported as a single result.
+ *
+ * Kept for callers that only care about the common single-record case.
+ *
+ * @param dir - the profile directory.
+ * @param options - lock budget; tests pass a zero wait.
+ * @returns the first record's outcome, or `none` when there was nothing to do.
  */
 export function recoverPendingDrop(dir: string, options?: ManifestLockOptions): RecoveryResult {
-  const journal = readJournal(dir)
-  if (journal === undefined) {
-    clearJournal(dir)
-    return { kind: 'none' }
-  }
-  const applied = withManifestLock(dir, () => undoDrop(dir, journal), options)
-  if (applied === undefined) {
-    // Somebody is rewriting the manifest right now. Leaving the record alone is
-    // the whole point: the next load will try again, and a repair that raced a
-    // live writer is exactly how an entry ends up lost for good.
-    return { kind: 'failed', name: journal.name, reason: LOCK_BUSY }
-  }
-  return applied
+  return recoverPendingDrops(dir, options)[0] ?? { kind: 'none' }
 }
 
 /**
  * The repair itself, run under the writer lock.
+ *
+ * @param dir - the profile directory.
+ * @returns one result per record that was handled.
+ */
+function undoDrops(dir: string): RecoveryResult[] {
+  const records = readRecords(dir)
+  if (records.length === 0) {
+    // Nothing recorded, so nothing to undo. The file is removed for the same
+    // reason the empty state is never written: a leftover empty journal only
+    // makes the next load do work that cannot change anything.
+    writeRecords(dir, [])
+    return []
+  }
+  const results: RecoveryResult[] = []
+  for (const journal of records) results.push(undoDrop(dir, journal))
+  return results
+}
+
+/**
+ * Undo exactly one record.
+ *
+ * The record is cleared by name, never wholesale: another package's entry may
+ * still be missing, and its record is the only thing that remembers it.
  *
  * @param dir - the profile directory.
  * @param journal - the record describing the entry that went missing.
@@ -270,11 +406,11 @@ function undoDrop(dir: string, journal: DropJournal): RecoveryResult {
     // No dependencies at all: the manifest was rewritten by something else, so
     // the record no longer describes it. Dropping the record is the only safe
     // move — inventing a `dependencies` object could undo a deliberate edit.
-    clearJournal(dir)
+    clearRecord(dir, journal.name)
     return { kind: 'none' }
   }
   if (Object.hasOwn(record, journal.name)) {
-    clearJournal(dir)
+    clearRecord(dir, journal.name)
     return { kind: 'settled', name: journal.name }
   }
   record[journal.name] = journal.spec
@@ -287,7 +423,7 @@ function undoDrop(dir: string, journal: DropJournal): RecoveryResult {
       reason: writeError instanceof Error ? writeError.message : String(writeError),
     }
   }
-  clearJournal(dir)
+  clearRecord(dir, journal.name)
   return { kind: 'restored', name: journal.name, spec: journal.spec }
 }
 
@@ -321,7 +457,12 @@ function settleRecord(dir: string, name: string): boolean {
   const dependencies = manifest.dependencies
   if (dependencies === null || typeof dependencies !== 'object' || Array.isArray(dependencies)) return false
   if (!Object.hasOwn(dependencies as Record<string, unknown>, name)) return false
-  clearJournal(dir)
+  /*
+   * Only this package's record. Clearing the file here is what let one step's
+   * success erase a different step's pending drop, whose entry was still
+   * missing.
+   */
+  clearRecord(dir, name)
   return true
 }
 
@@ -357,16 +498,22 @@ function removeEntry(dir: string, name: string): DropResult {
    * Journal first, then the manifest. The other order leaves a window where the
    * entry is gone and nothing on disk remembers what it was — the exact state
    * that turned a killed install into a missing theme.
+   *
+   * This adds or replaces this package's record and leaves the others alone. One
+   * record per profile meant a step that failed to restore its entry lost it for
+   * good as soon as the next step dropped something: this write replaced the
+   * only reminder, and that step's confirmation then removed it.
    */
-  if (!writeJournal(dir, { name, spec, at: Date.now() })) {
+  if (!upsertRecord(dir, { name, spec, at: Date.now() })) {
     return { kind: 'unavailable', reason: 'could not record the pending drop' }
   }
   delete record[name]
   try {
     writeManifest(dir, manifest)
   } catch (writeError) {
-    // The manifest still has the entry, so the record is stale: remove it.
-    clearJournal(dir)
+    // The manifest still has the entry, so this package's record is stale:
+    // remove it, and only it.
+    clearRecord(dir, name)
     return {
       kind: 'unavailable',
       reason: writeError instanceof Error ? writeError.message : String(writeError),
@@ -431,7 +578,9 @@ function putEntryBack(dir: string, name: string, spec: string): boolean {
     }
   }
   // The entry just went to disk under the lock, so nothing can overwrite it
-  // with a snapshot that predates this write: the record has served its purpose.
-  clearJournal(dir)
+  // with a snapshot that predates this write: this package's record has served
+  // its purpose. Other packages' records stay — their entries may still be
+  // missing.
+  clearRecord(dir, name)
   return true
 }

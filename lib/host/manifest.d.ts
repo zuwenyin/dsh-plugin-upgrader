@@ -2,7 +2,7 @@ import type { ManifestLockOptions } from './lock.ts';
 /** Where a profile keeps its manifest. */
 export declare const MANIFEST_FILE = "package.json";
 /**
- * Where a pending drop is recorded, next to the manifest it belongs to.
+ * Where pending drops are recorded, next to the manifest they belong to.
  *
  * The drop has to survive a crash to be undoable. Writing the intent to disk
  * before the entry disappears means the next process to load this plugin can
@@ -10,6 +10,12 @@ export declare const MANIFEST_FILE = "package.json";
  * it no longer lists — which is how a failed upgrade lost a theme: pnpm spent
  * two minutes verifying a lockfile, the app was restarted, and the dependency
  * entry was never written back.
+ *
+ * The file holds one record **per package**. One record for the whole profile is
+ * what made a batch lose a plugin: a step that failed could not restore its
+ * entry, the next step's drop overwrote the only record, and that step's success
+ * then cleared it. The record the first step depended on was gone, and the next
+ * load found nothing to repair.
  */
 export declare const JOURNAL_FILE = "package.json.upgrader-journal.json";
 /** What a drop records, so a later process can undo it. */
@@ -50,10 +56,11 @@ export type DropResult = {
     reason: string;
 };
 /**
- * Forget the pending drop.
+ * Forget every pending drop.
  *
- * Called once the entry is back, or once pnpm has written a new version in its
- * place — either way there is nothing left to undo.
+ * Kept because the journal is a whole file and a caller may legitimately want it
+ * gone (tests, and a profile being reset). Nothing in the upgrade path uses it:
+ * there, records are settled one package at a time.
  *
  * @param dir - the profile directory.
  */
@@ -61,10 +68,17 @@ export declare function clearJournal(dir: string): void;
 /**
  * Read the pending drop, when one is recorded.
  *
+ * Without a name this reports the first record, which is enough for diagnostics
+ * and for the single-record cases; with a name it reports that package's record.
+ * The upgrade path never decides anything from this — it works from
+ * {@link readRecords} inside the lock — so this is not where a stale record can
+ * be acted on.
+ *
  * @param dir - the profile directory.
+ * @param name - the package to read, or omitted for the first record.
  * @returns the record, or `undefined` when there is none to read.
  */
-export declare function readJournal(dir: string): DropJournal | undefined;
+export declare function readJournal(dir: string, name?: string): DropJournal | undefined;
 /** What a recovery pass did, for the caller to report. */
 export type RecoveryResult = {
     kind: 'none';
@@ -81,15 +95,20 @@ export type RecoveryResult = {
     reason: string;
 };
 /**
- * Undo a drop whose install never finished.
+ * Undo every drop whose install never finished.
  *
  * This is the crash repair. A drop writes its intent to the journal before the
  * entry leaves the manifest, so whichever process loads the plugin next can see
- * that an entry is missing and put it back. Two outcomes are possible:
+ * that an entry is missing and put it back. For each record two outcomes are
+ * possible:
  *
  *   - the entry is still absent, so pnpm never wrote the new version: restore it;
  *   - the entry is present, so the install landed and simply outlived the drop
  *     record: forget the record and leave the manifest alone.
+ *
+ * Every record is repaired, not just one: a batch whose first step failed leaves
+ * its record behind while the later steps run, and the profile is only whole
+ * again once all of them have been settled.
  *
  * Doing this at load time rather than at next upgrade matters: a profile with a
  * package on disk and no dependency entry is invisible to the manager, so the
@@ -97,7 +116,18 @@ export type RecoveryResult = {
  * hand.
  *
  * @param dir - the profile directory.
- * @returns what happened.
+ * @param options - lock budget; tests pass a zero wait.
+ * @returns one result per record, in the order the records were written.
+ */
+export declare function recoverPendingDrops(dir: string, options?: ManifestLockOptions): RecoveryResult[];
+/**
+ * Undo one drop, reported as a single result.
+ *
+ * Kept for callers that only care about the common single-record case.
+ *
+ * @param dir - the profile directory.
+ * @param options - lock budget; tests pass a zero wait.
+ * @returns the first record's outcome, or `none` when there was nothing to do.
  */
 export declare function recoverPendingDrop(dir: string, options?: ManifestLockOptions): RecoveryResult;
 /**

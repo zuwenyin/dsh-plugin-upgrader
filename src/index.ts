@@ -36,7 +36,7 @@ import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildHostInfo } from './host/hostinfo.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type InstallGuard, type StepOutcome } from './host/install.ts'
-import { profileDirFrom, recoverPendingDrop } from './host/manifest.ts'
+import { profileDirFrom, recoverPendingDrops } from './host/manifest.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
 import { dshRequirementOf, fetchPackument, probeRegistry, type VersionManifest } from './host/registry.ts'
 import { runtimeVersionOf } from './host/runtime.ts'
@@ -720,7 +720,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
   )
 
   /**
-   * Repair a drop whose install never finished.
+   * Repair drops whose installs never finished.
    *
    * An upgrade replaces a version by removing the dependency entry and letting
    * pnpm write the new one back. If the process dies inside that window — a
@@ -728,12 +728,15 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
    * still on disk, which makes the plugin invisible to the manager. The journal
    * written before the drop is what makes that state recoverable, so it is read
    * here, on every load, before anything else can look at the profile.
+   *
+   * Every record is repaired, not just the first: a batch can leave more than
+   * one behind, and each names a plugin that is currently invisible.
    */
   const dir = profileDirFrom()
   if (dir !== undefined) {
     try {
-      const recovery = recoverPendingDrop(dir)
-      if (recovery.kind === 'restored') {
+      for (const recovery of recoverPendingDrops(dir)) {
+        if (recovery.kind !== 'restored') continue
         console.warn(
           `[plugin-upgrader] an interrupted upgrade left ${recovery.name} out of the profile manifest; ` +
             `restored it at ${recovery.spec}. Upgrade it again to finish.`,

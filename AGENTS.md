@@ -728,7 +728,57 @@ pid、本进程持锁立即忙、别人的锁到点放弃、别人释放后接�
 `test/manifest.test.ts`（5 条新增：持锁时 drop 返回 unavailable 且 manifest 字节未变、
 还原拿不到锁保留记录供下次修复、恢复拿不到锁也保留记录、并发 writer 抹不掉已还原的
 条目、已还原的条目确认时遇锁不等待）。这些用例都传 `{ waitMs: 0 }`，
-整套文件仍只要 ~460ms。
+整套文件只要 ~460ms。
+
+---
+
+## 23. 一条 journal 记录只够一个包
+
+**不可退化。** §22 修好了「并发 writer 抹掉条目」，却把 journal 留成**一个 profile
+一条记录**。评审第二轮（[@Herdeny](https://github.com/Herdeny)，
+`awesome-dsh-plugins-2026#11`）用已发布的 `dsh-plugin-upgrader@1.7.2` 的 `runStep`
+就复现了：A 的 in-place 安装失败、还原又被锁挡住，记录还指着 A；锁一放开 B 正常升级，
+B 的 drop 把 A 的记录**覆盖**掉，B 的 confirmation 再把文件**整份清掉**——批次跑完
+A 从 `package.json` 里没了，`recoverPendingDrop` 返回 `{ kind: 'none' }`。
+
+- **记录按名字归属，一个包一条。** journal 的磁盘格式是
+  `{ version: 2, records: DropJournal[] }`（`JOURNAL_VERSION = 2`），文件名不变。
+  `upsertRecord` 只替换同名那条，`clearRecord(dir, name)` 只删同名那条。
+- **结算只结算自己的。** `confirmDependency` / `restoreDependency` / `undoDrop`
+  清理时必须带 name；**不要**再出现无参数的「整份清空」。1.7.2 的
+  `settleRecord` 只要该 name 在 `dependencies` 里就清掉整个文件，那是 B 的确认
+  抹掉 A 记录的第二条路径。
+- **一次恢复要把所有记录都修完。** `recoverPendingDrops(dir)` 返回
+  `RecoveryResult[]`，加载时（`src/index.ts`）逐条报告 `restored`；
+  `recoverPendingDrop(dir)` 退化成取第一条，只为兼容旧调用。
+- **读 journal 也要进锁。** `recoverPendingDrops` 在锁外只做一件事：判断「有没有记录」
+  和「拿不到锁时该报哪些名字」；**决不从锁外那次读里采取任何行动**。真正读、改、删
+  全在 `withManifestLock` 里（§22）。评审原文最后一句就是这条。
+- **拿不到锁时记录原样留着**，返回 `{ kind: 'failed', reason: LOCK_BUSY }`；
+  `restoreDependency` 返回 `false`。`replaceWithoutRemoval` 的两条失败分支现在都
+  会写明「could NOT restore the dependency entry, the next start repairs it」，
+  **日志不许说已经还原**。
+- **旧格式必须还能读。** 1.7.2 及更早写的是单个对象（`{name, spec, at}`）；
+  `readRecords` 见到 `records` 不是数组时，把整个顶层对象当成一条记录。
+  **不要**为了「格式干净」拒绝旧文件——那等于让升级中断过的 profile 永远修不回来。
+- **写盘失败不留半个文件。** `writeRecords` 先写 `${target}.upgrader-tmp` 再
+  `renameSync`；`records` 为空时直接 `rmSync` 删掉文件，不留空壳。
+- **测试要能红**：把 `upsertRecord` 改回覆盖式（`writeRecords(dir, [journal])`）、
+  把 `clearRecord` 改回整份清空，会有 **5 条变红**（4 条 manifest + 1 条 install），
+  已实测。
+
+**代码：** `src/host/manifest.ts` 的 `JournalEnvelope` / `JOURNAL_VERSION` /
+`readRecords` / `writeRecords` / `upsertRecord` / `clearRecord` /
+`recoverPendingDrops` / `undoDrops`（锁内）；`src/index.ts` 的加载时清理循环；
+`src/host/install.ts:526` `replaceWithoutRemoval` 的两条还原日志。
+
+**守护：** `test/manifest.test.ts` —— `a second drop does not overwrite a record that is
+still pending`、`a confirmation settles its own record and leaves the others pending`、
+`a restore settles its own record and leaves the others pending`、
+`a recovery pass repairs every record, not just the first`、
+`a journal written by an earlier version is still read`（5 条）；
+`test/install.test.ts` —— `a failed first step does not lose its entry when the next step
+succeeds`（评审描述的那条链：第一步失败 → 第二步成功 → 重新加载时把第一个依赖补回来）。
 
 ---
 

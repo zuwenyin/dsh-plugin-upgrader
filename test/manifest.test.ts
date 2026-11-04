@@ -11,6 +11,7 @@ import {
   confirmDependency,
   readJournal,
   recoverPendingDrop,
+  recoverPendingDrops,
 } from '../src/host/manifest.ts'
 import { LOCK_BUSY, LOCK_FILE, withManifestLock } from '../src/host/lock.ts'
 
@@ -439,6 +440,123 @@ test('a confirmation of an entry that is already back does not wait on a locked 
     fixture.cleanup()
   }
 })
+
+test('a second drop does not overwrite a record that is still pending', () => {
+  /*
+   * The batch incident: step A fails to restore its entry, so A's record is the
+   * only thing that remembers A is missing. Step B then drops B. One record per
+   * profile meant that write replaced A's, and B's success cleared it — A was
+   * gone with nothing left to repair it.
+   */
+  const fixture = profile()
+  try {
+    assert.equal(dropDependency(fixture.dir, 'dsh-plugin-upgrader').kind, 'dropped')
+    assert.equal(dropDependency(fixture.dir, 'other').kind, 'dropped')
+
+    assert.equal(readJournal(fixture.dir, 'dsh-plugin-upgrader')?.spec, '1.1.1', 'A is still on record')
+    assert.equal(readJournal(fixture.dir, 'other')?.spec, '^2.0.0', 'and so is B')
+
+    assert.deepEqual(recoverPendingDrops(fixture.dir).sort(byName), [
+      { kind: 'restored', name: 'dsh-plugin-upgrader', spec: '1.1.1' },
+      { kind: 'restored', name: 'other', spec: '^2.0.0' },
+    ])
+    const deps = fixture.manifest().dependencies as Record<string, string>
+    assert.equal(deps['dsh-plugin-upgrader'], '1.1.1')
+    assert.equal(deps['other'], '^2.0.0')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a confirmation settles its own record and leaves the others pending', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    dropDependency(fixture.dir, 'other')
+    // B's install landed, so pnpm wrote its entry back; A's did not.
+    const manifest = fixture.manifest()
+    ;(manifest.dependencies as Record<string, string>)['other'] = '2.1.0'
+    writeFileSync(join(fixture.dir, 'package.json'), JSON.stringify(manifest, undefined, 2), 'utf8')
+
+    assert.equal(confirmDependency(fixture.dir, 'other'), true)
+    assert.equal(readJournal(fixture.dir, 'other'), undefined, 'B is settled')
+    assert.equal(readJournal(fixture.dir, 'dsh-plugin-upgrader')?.spec, '1.1.1', 'A is not')
+
+    assert.deepEqual(recoverPendingDrops(fixture.dir), [
+      { kind: 'restored', name: 'dsh-plugin-upgrader', spec: '1.1.1' },
+    ])
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a restore settles its own record and leaves the others pending', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    dropDependency(fixture.dir, 'other')
+
+    assert.equal(restoreDependency(fixture.dir, 'dsh-plugin-upgrader', '1.1.1'), true)
+    assert.equal(readJournal(fixture.dir, 'dsh-plugin-upgrader'), undefined)
+    // The other package's entry is still missing, and its record is the only
+    // thing that knows the range it carried.
+    assert.equal(readJournal(fixture.dir, 'other')?.spec, '^2.0.0')
+
+    const recovery = recoverPendingDrops(fixture.dir)
+    assert.deepEqual(recovery, [{ kind: 'restored', name: 'other', spec: '^2.0.0' }])
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a recovery pass repairs every record, not just the first', () => {
+  const fixture = profile()
+  try {
+    dropDependency(fixture.dir, 'dsh-plugin-upgrader')
+    dropDependency(fixture.dir, 'other')
+    // Both installs never reached pnpm: the next load has to put both back.
+    const recovery = recoverPendingDrops(fixture.dir)
+    assert.equal(recovery.length, 2)
+    const deps = fixture.manifest().dependencies as Record<string, string>
+    assert.equal(deps['dsh-plugin-upgrader'], '1.1.1')
+    assert.equal(deps['other'], '^2.0.0')
+    assert.equal(existsSync(join(fixture.dir, JOURNAL_FILE)), false, 'no records left behind')
+    assert.deepEqual(recoverPendingDrops(fixture.dir), [], 'and nothing left to do')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('a journal written by an earlier version is still read', () => {
+  /*
+   * Before the journal held one record per package it was a single bare record,
+   * not an envelope. A profile that was interrupted then is upgraded to this
+   * version and repaired here, so the old shape has to stay readable.
+   */
+  const fixture = profile()
+  try {
+    const manifest = fixture.manifest()
+    delete (manifest.dependencies as Record<string, string>)['dsh-plugin-upgrader']
+    writeFileSync(join(fixture.dir, 'package.json'), JSON.stringify(manifest, undefined, 2), 'utf8')
+    writeFileSync(
+      join(fixture.dir, JOURNAL_FILE),
+      JSON.stringify({ name: 'dsh-plugin-upgrader', spec: '1.1.1', at: 1 }),
+      'utf8',
+    )
+
+    assert.deepEqual(recoverPendingDrops(fixture.dir), [
+      { kind: 'restored', name: 'dsh-plugin-upgrader', spec: '1.1.1' },
+    ])
+    assert.equal((fixture.manifest().dependencies as Record<string, string>)['dsh-plugin-upgrader'], '1.1.1')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+/** Sort records by name, so a two-record assertion does not depend on write order. */
+function byName(a: { kind: string; name?: string }, b: { kind: string; name?: string }): number {
+  return (a.name ?? '').localeCompare(b.name ?? '')
+}
 
 /** The dependency range the fixture's manifest records for `name`. */
 function dependencyOf(fixture: { manifest: () => Record<string, unknown> }, name: string): string | undefined {

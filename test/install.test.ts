@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { runStep, validateStep } from '../src/host/install.ts'
+import { readJournal, recoverPendingDrops } from '../src/host/manifest.ts'
+import { LOCK_FILE } from '../src/host/lock.ts'
 import type {
   BundleInfo,
   ChangeResult,
@@ -748,6 +750,71 @@ test('a failed upgrade switches off a plugin the manager reports as loaded', asy
 
   assert.deepEqual(calls.enable, [{ name: 'pkg', enabled: false }])
   assert.match(log.join('\n'), /disable pkg \(restoring the previous state\)/)
+})
+
+test('a failed first step does not lose its entry when the next step succeeds', async () => {
+  /*
+   * The multi-plugin incident: step one drops its entry, the in-place install
+   * dies, and the restore cannot run because another writer holds the lock — so
+   * the only thing that remembers the entry was ever there is its record. Step
+   * two then drops its own entry and succeeds. With one record per profile that
+   * write replaced the first record and the confirmation removed it, leaving the
+   * first plugin gone from the manifest with nothing left to repair it.
+   */
+  await withProfile(
+    {
+      name: 'desktop',
+      dependencies: { first: '1.0.0', second: '1.0.0' },
+      dsh: { profile: { bundles: ['first', 'second'] } },
+    },
+    async (dir) => {
+      const { manager } = fakeManager({
+        installs: (call) => {
+          if (call === 0) return refused('already-installed', 'install')
+          if (call === 1) {
+            // The in-place attempt dies, and a competing writer already holds
+            // the lock, so the restore right behind it cannot run either.
+            writeFileSync(join(dir, LOCK_FILE), '4242\n', 'utf8')
+            return new Error('registry died')
+          }
+          if (call === 2) return refused('already-installed', 'install')
+          // pnpm is what writes a landed entry back into the profile.
+          const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+            dependencies: Record<string, string>
+          }
+          manifest.dependencies.second = '2.0.0'
+          writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, undefined, 2)}\n`, 'utf8')
+          return applied({ version: '2.0.0' })
+        },
+        // The removal that would have replaced the first plugin is refused too,
+        // which is what leaves the step without a usable fallback.
+        removes: () => refused('operation-error', 'remove'),
+      })
+
+      const first = await runStep(manager, { name: 'first', version: '2.0.0' }, () => {})
+      assert.equal(first.ok, false)
+
+      // The competitor is done with the profile; the batch carries on.
+      rmSync(join(dir, LOCK_FILE), { force: true })
+      const second = await runStep(manager, { name: 'second', version: '2.0.0' }, () => {})
+      assert.equal(second.ok, true)
+
+      assert.equal(readJournal(dir, 'first')?.spec, '1.0.0', 'the failed step is still on record')
+      const after = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+        dependencies: Record<string, string>
+      }
+      assert.equal(after.dependencies.second, '2.0.0')
+      assert.equal(Object.hasOwn(after.dependencies, 'first'), false)
+
+      // The next load is what has to put the first plugin back.
+      assert.deepEqual(recoverPendingDrops(dir), [{ kind: 'restored', name: 'first', spec: '1.0.0' }])
+      const repaired = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+        dependencies: Record<string, string>
+      }
+      assert.equal(repaired.dependencies.first, '1.0.0')
+      assert.equal(repaired.dependencies.second, '2.0.0')
+    },
+  )
 })
 
 test('a rollback that is refused says so instead of pretending', async () => {
