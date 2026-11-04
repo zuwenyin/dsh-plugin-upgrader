@@ -43,6 +43,17 @@ export interface StepOutcome {
   warnings?: string[]
   /** The version this step put back after destroying the one that was there. */
   rolledBack?: string
+  /**
+   * The version that is on disk again but that the host could not activate.
+   *
+   * Separate from `rolledBack` on purpose. Both mean "the old files are back";
+   * only `rolledBack` means the plugin runs again. A user told the wrong one
+   * either thinks a missing plugin is fine, or goes off to install a package
+   * that is already installed.
+   */
+  inactive?: string
+  /** Why a repair did not fully work: the host's diagnostic, when it had one. */
+  rollbackReason?: string
   packageResult?: {
     exitCode: number
     kind?: string
@@ -53,6 +64,15 @@ export interface StepOutcome {
 
 /** Allowed per-step actions. */
 export const ACTIONS = new Set<string>(['upgrade', 'switch'])
+
+/**
+ * What a rollback ended up doing.
+ *
+ * `back` and `inactive` both leave the old version on disk; they differ in
+ * whether the host managed to activate it. Only `refused` means the user has to
+ * install something again, so the panel must not use one sentence for all three.
+ */
+type Rollback = { kind: 'back' } | { kind: 'inactive'; reason: string } | { kind: 'refused'; reason: string }
 
 /** The manager's code for "a live loader fiber still owns this bundle". */
 const IN_USE = 'bundle-in-use'
@@ -409,7 +429,7 @@ export async function restoreSelection(
  * @param options - the install options the caller already built.
  * @param log - progress sink.
  * @param announce - receives the request id the rollback installs under.
- * @returns whether the old version is back.
+ * @returns what the old version ended up as: back, on disk but inactive, or not there.
  */
 async function rollBack(
   manager: PluginManager,
@@ -418,7 +438,7 @@ async function rollBack(
   options: Record<string, unknown>,
   log: LogSink,
   announce?: RequestIdSink,
-): Promise<boolean> {
+): Promise<Rollback> {
   const spec = `${step.name}@${previous}`
   const requestId =
     globalThis.crypto?.randomUUID?.() ?? `pu-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -426,23 +446,58 @@ async function rollBack(
   log(`roll back: install ${spec} again (the failed replacement already removed it)`)
   try {
     const result = await manager.installBundle(spec, { ...options, requestId })
-    const back = result?.application === 'applied' || result?.application === 'restart-required'
-    if (result?.error !== undefined || !back) {
-      log(
-        `  ! rollback refused (${result?.error?.code ?? 'no change'}); ${step.name}@${previous} is not installed — ` +
-          'install it again from the Installed tab',
-      )
-      return false
+    const settled = result?.application === 'applied' || result?.application === 'restart-required'
+    if (settled) {
+      log(`  ✓ ${step.name}@${previous} is back where it was`)
+      return { kind: 'back' }
     }
-    log(`  ✓ ${step.name}@${previous} is back where it was`)
-    return true
+    /*
+     * "pnpm did nothing" and "pnpm put the files back but the host could not
+     * activate them" are different facts, and only the first one means the user
+     * has to install anything again. Collapsing them — which is what reading
+     * `application` alone does — prints "is not installed" for a package that is
+     * on disk, and sends the user to an install the manager then refuses with
+     * `already-installed`.
+     */
+    const reason = result?.error?.diagnostic ?? result?.error?.code ?? 'no change'
+    if (landedOnDisk(result)) {
+      log(
+        `  ! ${step.name}@${previous} is installed but did not activate (${reason}); ` +
+          `the package is back on disk - enable it again from the Installed tab`,
+      )
+      return { kind: 'inactive', reason }
+    }
+    log(
+      `  ! rollback refused (${result?.error?.code ?? 'no change'}); ${step.name}@${previous} is not installed — ` +
+        'install it again from the Installed tab',
+    )
+    return { kind: 'refused', reason }
   } catch (error) {
     log(
       `  ! rollback failed: ${describeFailure(error instanceof Error ? error.message : String(error))}; ` +
         `${step.name}@${previous} is not installed`,
     )
-    return false
+    return { kind: 'refused', reason: error instanceof Error ? error.message : String(error) }
   }
+}
+
+/**
+ * Whether a failed change still left the package files on disk.
+ *
+ * Three independent signals have to agree, because each one alone lies: `changed`
+ * says the profile was rewritten, `packageResult.exitCode` says pnpm succeeded,
+ * and `stage` says how far the host got. A change that stopped at `enable` with a
+ * clean pnpm run is installed-but-not-activated; anything else that failed while
+ * pnpm was still running (or never started) is a package that is not there.
+ *
+ * @param result - the manager's answer, when there was one.
+ * @returns whether the package is on disk despite the failure.
+ */
+function landedOnDisk(result: ChangeResult | undefined): boolean {
+  if (result === undefined || result.changed !== true) return false
+  if (result.stage !== 'enable') return false
+  const exit = result.packageResult?.exitCode
+  return exit === undefined || exit === 0
 }
 
 /**
@@ -468,7 +523,8 @@ async function rollBack(
  * @param options - the install options the caller already built.
  * @param log - progress sink.
  * @param announce - receives the request id a rollback installs under.
- * @returns whether the profile was put back.
+ * @returns what the failed step left the plugin as, or `undefined` when the
+ *   profile never lost it (re-selecting a bundle is not a rollback).
  */
 async function recover(
   manager: PluginManager,
@@ -477,7 +533,7 @@ async function recover(
   options: Record<string, unknown>,
   log: LogSink,
   announce?: RequestIdSink,
-): Promise<boolean> {
+): Promise<Rollback | undefined> {
   const entry = await bundleOf(manager, step.name)
   if (entry !== undefined && entry.installed !== false) {
     /*
@@ -489,11 +545,11 @@ async function recover(
      */
     if (step.enabled === false) await restoreEnabledState(manager, step, false, log)
     else await restoreSelection(manager, step.name, log)
-    return false
+    return undefined
   }
   if (previous === undefined) {
     log(`  ! ${step.name} is no longer installed, and its previous version was not recorded`)
-    return false
+    return { kind: 'refused', reason: 'previous-version-unknown' }
   }
   return rollBack(manager, step, previous, options, log, announce)
 }
@@ -762,7 +818,7 @@ export async function runStep(
        * re-select it, gone means install the previous version again. Confusing
        * them is what made "upgrade failed" also mean "plugin disappeared".
        */
-      const back = await recover(manager, step, previous, options, log, announce)
+      const repair = await recover(manager, step, previous, options, log, announce)
       return {
         ...base,
         requestId: retryId,
@@ -772,7 +828,7 @@ export async function runStep(
         message: `install after removal failed: ${describeFailure(
           error instanceof Error ? error.message : String(error),
         )}`,
-        ...(back ? { rolledBack: previous } : {}),
+        ...repairOutcome(repair, previous),
       }
     }
   }
@@ -781,7 +837,8 @@ export async function runStep(
    * removal already done. Same hazard, same repair; the reported reason stays
    * whatever the manager said.
    */
-  const restored = result?.error === undefined ? false : await recover(manager, step, previous, options, log, announce)
+  const repair =
+    result?.error === undefined ? undefined : await recover(manager, step, previous, options, log, announce)
   // Only a change that landed has an enabled state to restore: a failed install
   // left nothing behind, and asking to toggle it would report a second, louder
   // error (`operation-error`) for a package that was never added.
@@ -791,7 +848,7 @@ export async function runStep(
     ...base,
     ...(enabled === undefined ? {} : { enabled }),
     ok: installed,
-    ...(restored ? { rolledBack: previous } : {}),
+    ...repairOutcome(repair, previous),
     application: result?.application,
     changed: result?.changed === true,
     stage: result?.stage,
@@ -814,6 +871,29 @@ export async function runStep(
                 : undefined,
           },
   }
+}
+
+/**
+ * Turn a repair into the outcome fields the panel reads.
+ *
+ * `rolledBack` means "the old version is usable again". A rollback that put the
+ * files back but could not activate them is *not* that — reporting it as one
+ * would tell the user everything is fine while the plugin is missing from the
+ * page; reporting it as "not installed", which is what the single boolean did,
+ * is worse: it sends them to install a package that is already there.
+ *
+ * @param repair - what `recover` managed to do, when it had to do anything.
+ * @param previous - the version the step destroyed.
+ * @returns the fields to spread into the outcome.
+ */
+function repairOutcome(
+  repair: Rollback | undefined,
+  previous: string | undefined,
+): Pick<StepOutcome, 'rolledBack' | 'inactive' | 'rollbackReason'> {
+  if (repair === undefined || previous === undefined) return {}
+  if (repair.kind === 'back') return { rolledBack: previous }
+  if (repair.kind === 'inactive') return { inactive: previous, rollbackReason: repair.reason }
+  return { rollbackReason: repair.reason }
 }
 
 /**

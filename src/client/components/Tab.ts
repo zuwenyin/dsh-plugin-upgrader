@@ -126,7 +126,29 @@ export function Tab(props: TabProps): unknown {
         return settled
       }
       const failures = Array.isArray(settled?.results) ? settled.results.filter((result) => result.ok !== true) : []
-      if (failures.length > 0) {
+      /**
+       * A step whose rollback put the files back but could not activate them is
+       * the one failure a generic line gets wrong: "not installed" sends the
+       * user to install a package that is already there, and saying nothing
+       * hides a plugin that is missing from the page. Say which of the two it
+       * is, for each affected plugin, before anything else.
+       */
+      const inactive = failures.filter((failure) => failure.inactive !== undefined)
+      if (inactive.length > 0) {
+        setBanner({
+          tone: 'err',
+          text: inactive
+            .map((failure) =>
+              t(
+                'inactiveAfterRollback',
+                failure.name,
+                failure.inactive ?? '',
+                failure.rollbackReason ?? (failure.message ?? 'error'),
+              ),
+            )
+            .join(' · '),
+        })
+      } else if (failures.length > 0) {
         /**
          * `message` is the manager's code (`bundle-in-use`, `not-removable`),
          * which says nothing about what to do; `detail` is the host's hint at

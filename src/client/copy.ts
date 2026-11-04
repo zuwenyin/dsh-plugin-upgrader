@@ -102,6 +102,8 @@ export const ZH: Copy = {
   jobDone: '批量升级完成',
   jobCancelled: '已取消',
   busyAdopted: '已有一批升级正在进行，已接着显示它的进度。',
+  inactiveAfterRollback: (name: string, version: string, reason: string) =>
+    `${name}：升级失败，已经装回 ${version}，但宿主没能把它激活（${reason}）。文件在盘上，去「已安装」里重新启用它，别再装一遍——那会得到「已安装」。`,
   lostJob: '升级进度已失去联系（宿主可能重启过）。请检查更新，确认插件当前版本。',
   log: '运行日志',
   showLog: '查看日志',
@@ -249,6 +251,8 @@ export const EN: Copy = {
   jobDone: 'Batch upgrade finished',
   jobCancelled: 'Cancelled',
   busyAdopted: 'A batch is already running; showing its progress instead.',
+  inactiveAfterRollback: (name: string, version: string, reason: string) =>
+    `${name}: the upgrade failed and ${version} is back on disk, but the host could not activate it (${reason}). Re-enable it from the Installed tab — do not install it again, that returns "already installed".`,
   lostJob: 'Lost contact with the upgrade (the host may have restarted). Check for updates to confirm the installed version.',
   log: 'Run log',
   showLog: 'Show log',

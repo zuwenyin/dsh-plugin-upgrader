@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-upgrader",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "DSH plugin for DeepSeek Harness: upgrade plugins from the Plugins page, version history, rollback, live pnpm progress",
   "keywords": [
     "dsh",

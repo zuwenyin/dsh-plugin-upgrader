@@ -97,6 +97,12 @@ export interface StepResult {
   message?: string
   detail?: string
   application?: string
+  /** The version put back after the failed step destroyed what was there. */
+  rolledBack?: string
+  /** The version that is back on disk but that the host could not activate. */
+  inactive?: string
+  /** Why a repair did not fully work. */
+  rollbackReason?: string
 }
 
 /** A batch job, as polled and as adopted from the overview. */

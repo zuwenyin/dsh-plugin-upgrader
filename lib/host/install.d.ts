@@ -28,6 +28,17 @@ export interface StepOutcome {
     warnings?: string[];
     /** The version this step put back after destroying the one that was there. */
     rolledBack?: string;
+    /**
+     * The version that is on disk again but that the host could not activate.
+     *
+     * Separate from `rolledBack` on purpose. Both mean "the old files are back";
+     * only `rolledBack` means the plugin runs again. A user told the wrong one
+     * either thinks a missing plugin is fine, or goes off to install a package
+     * that is already installed.
+     */
+    inactive?: string;
+    /** Why a repair did not fully work: the host's diagnostic, when it had one. */
+    rollbackReason?: string;
     packageResult?: {
         exitCode: number;
         kind?: string;

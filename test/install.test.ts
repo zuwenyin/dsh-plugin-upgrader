@@ -840,8 +840,54 @@ test('a rollback that is refused says so instead of pretending', async () => {
 
     assert.equal(outcome.ok, false)
     assert.equal(outcome.rolledBack, undefined)
+    assert.equal(outcome.inactive, undefined)
     assert.match(log.join('\n'), /rollback refused \(operation-error\); pkg@1\.0\.0 is not installed/)
     assert.equal(calls.install.length, 4)
+  })
+})
+
+test('a rollback that installs but cannot activate is not called "not installed"', async () => {
+  /*
+   * The failure this pins: pnpm put 1.0.0 back on disk and the profile points at
+   * it, but the host refused to activate it (`stage: 'enable'`, clean pnpm run).
+   * The old code read `application` alone, so it printed "pkg@1.0.0 is not
+   * installed — install it again from the Installed tab" for a package that IS
+   * installed, and following that advice gets `already-installed` back. Say what
+   * actually happened instead, and do not claim the version was rolled back.
+   */
+  await withProfile({ name: 'desktop', dependencies: { pkg: '1.0.0' } }, async () => {
+    const { manager } = fakeManager({
+      installs: (call) => {
+        if (call === 0) return refused('already-installed', 'install')
+        if (call === 1) return refused('operation-error', 'install')
+        if (call === 2) return refused('incompatible-version', 'install')
+        // The rollback: pnpm succeeded, the profile is written, activation failed.
+        return {
+          changed: true,
+          application: 'failed',
+          stage: 'enable',
+          target: 'pkg',
+          packageResult: { exitCode: 0, output: 'added 1 package', truncated: false, logPath: 'x' },
+          error: { code: 'operation-error', diagnostic: 'dsh: warning: 1 entry did not activate' },
+        } as ChangeResult
+      },
+    })
+    const listed = [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+    ]
+    let reads = 0
+    manager.listBundles = async () => (reads++ === 0 ? listed : [])
+
+    const log: string[] = []
+    const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.rolledBack, undefined, 'the plugin does not run, so it is not rolled back')
+    assert.equal(outcome.inactive, '1.0.0', 'the package is back on disk, though')
+    assert.equal(outcome.rollbackReason, 'dsh: warning: 1 entry did not activate')
+    const text = log.join('\n')
+    assert.doesNotMatch(text, /pkg@1\.0\.0 is not installed/)
+    assert.match(text, /pkg@1\.0\.0 is installed but did not activate \(dsh: warning: 1 entry did not activate\)/)
   })
 })
 

@@ -42,6 +42,7 @@
 | 安装前的兼容性预检 | §20 · [20-precheck](docs/rules/20-precheck.md) |
 | 失败升级后的状态恢复 | §21 · [21-failed-upgrade-enabled](docs/rules/21-failed-upgrade-enabled.md) |
 | journal 本身的格式与「一条记录属于谁」 | §23 · [23-journal-per-package](docs/rules/23-journal-per-package.md) |
+| 回滚之后那一行怎么说、`rolledBack` / `inactive` | §24 · [24-rollback-inactive](docs/rules/24-rollback-inactive.md) |
 
 ---
 
@@ -392,6 +393,35 @@
 **代码：** `JournalEnvelope` / `JOURNAL_VERSION` / `readRecords` / `writeRecords` / `upsertRecord` / `clearRecord` / `recoverPendingDrops` / `undoDrops` @ `src/host/manifest.ts`；加载时清理循环 @ `src/index.ts`；`replaceWithoutRemoval` 的两条还原日志 @ `src/host/install.ts`
 **守护：** `test/manifest.test.ts`、`test/install.test.ts`
 **改之前先读** [`docs/rules/23-journal-per-package.md`](docs/rules/23-journal-per-package.md) —— 评审复现链与行号校对
+
+---
+
+## 24. 「文件装回去了」和「插件跑起来了」是两件事
+
+**不可退化。** 回滚把旧版本装回磁盘，不等于宿主把它激活了。把两者说成一句话，用户
+要么以为一个没在跑的插件没事，要么被指去重装一个明明已经装着的包。
+
+- **`application` 一个字段不够。** `applied` / `restart-required` 才等于「跑起来了」；
+  失败时还要看 `changed`、`stage`、`packageResult.exitCode` 三个信号（`landedOnDisk`）。
+- **停在 `enable` 且 pnpm 干净 = 装了没激活。** 结果是 `inactive`（附 `rollbackReason`），
+  **不是** `rolledBack`，更**不是**「没装」。只有 `kind: 'refused'` 才允许说
+  "is not installed — install it again"。
+- **两种失败两种说法。** 面板必须分开渲染：能让用户去「已安装」里重新启用的，
+  和真的丢了需要重装的，不能共用一句 `xxx: not installed`（`copy.ts` 的
+  `inactiveAfterRollback` 必须优先于通用失败拼接）。
+- **重试激活不要走 `installBundle`。** 已经声明过的依赖会被宿主用 `already-installed`
+  拒掉；走的路径是 `setBundleEnabled(false)` → `setBundleEnabled(true)`。
+- **`listBundles().enabled` 是「用户选择」，不是「跑起来了」。** 拿它判断激活与否，
+  正是这条规则要拦的错。
+
+**代码：** `Rollback` / `landedOnDisk` / `repairOutcome` / `rollBack` / `recover` @
+`src/host/install.ts`；`StepOutcome.inactive` / `rollbackReason` @ `src/host/install.ts`；
+`StepResult.inactive` / `rollbackReason` @ `src/client/types.ts`；横幅分支 @
+`src/client/components/Tab.ts`；文案 `inactiveAfterRollback` @ `src/client/copy.ts`
+**守护：** `test/install.test.ts`（`a rollback that installs but cannot activate is not
+called "not installed"`、`a rollback that is refused says so instead of pretending`）
+**改之前先读** [`docs/rules/24-rollback-inactive.md`](docs/rules/24-rollback-inactive.md) ——
+官方 #11886 的原始报告与三个信号的由来
 
 ---
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.5 — 2026-11-04
+
+- **A rollback that installed the old version but could not activate it was reported as "not
+  installed".** `rollBack` decided everything from `application`, which only says whether the
+  plugin ended up running. When pnpm succeeded and the profile was rewritten but activation
+  failed (`stage: 'enable'`, `packageResult.exitCode: 0`, diagnostic
+  `dsh: warning: 1 entry did not activate`), the log said `${name}@${previous} is not
+  installed — install it again from the Installed tab` — advice that returns
+  `already-installed`, because the package is right there. Reported upstream as
+  [deepseek-harness#11886](https://github.com/deepseek-ai/deepseek-harness/discussions/11886),
+  where the host's own dialog makes the same mistake.
+- `rollBack` now returns a `Rollback` (`back` / `inactive` / `refused`) instead of a boolean,
+  and `landedOnDisk` requires three independent signals before calling a failed change
+  installed-but-inactive: `changed`, `stage === 'enable'`, and a clean
+  `packageResult.exitCode`. A rollback that gets the files back without running them reports
+  `inactive` plus `rollbackReason` and says so in the log (`is installed but did not
+  activate`), and the panel shows a dedicated line telling the reader to re-enable it from
+  the Installed tab instead of installing it again. `rolledBack` keeps its old meaning: the
+  old version is usable again.
+
 ## 1.7.4 — 2026-11-04
 
 - **The package description never contained the word "DSH", and that is why npm could not
