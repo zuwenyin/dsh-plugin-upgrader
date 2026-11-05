@@ -43,6 +43,7 @@
 | 失败升级后的状态恢复 | §21 · [21-failed-upgrade-enabled](docs/rules/21-failed-upgrade-enabled.md) |
 | journal 本身的格式与「一条记录属于谁」 | §23 · [23-journal-per-package](docs/rules/23-journal-per-package.md) |
 | 回滚之后那一行怎么说、`rolledBack` / `inactive` | §24 · [24-rollback-inactive](docs/rules/24-rollback-inactive.md) |
+| 判断「有没有人在用」、下载量脚本 | §25 · [RELEASING.md](RELEASING.md) |
 
 ---
 
@@ -422,6 +423,27 @@
 called "not installed"`、`a rollback that is refused says so instead of pretending`）
 **改之前先读** [`docs/rules/24-rollback-inactive.md`](docs/rules/24-rollback-inactive.md) ——
 官方 #11886 的原始报告与三个信号的由来
+
+---
+
+## 25. 「下载总数」不是「使用量」
+
+**不可退化。** 判断有没有人真的在用，只能看**没发版那天的日下载量**。`last-month` 与
+「最近两天」两个数字都会骗人，而且是反方向的：
+
+- **`last-month` 会自己往下掉**：滚动 30 天窗口，包龄不足 30 天时每天都有旧日期滑出去、
+  没有同样老的补进来。看到平稳下坡**不是**回归。
+- **最近一两天报 0 是上报滞后**，不是没人用（拿 `react` 对照过，四千万下载的日子也报 0）。
+- **发版会把曲线搅乱**：发版日是固定开销（CI 安装、镜像同步、各目录站扫描器拉 tarball），
+  本包实测是安静日的 8.3 倍。**发版频率本身就是噪声源**，功能没变不必发版。
+- **基线用中位数不用平均数**：一个镜像批量拉一次就能把均值抬高。
+
+**代码：** `scripts/downloads.mjs`（`lagDaysOf` / `splitDays` / `summarise` / `rolloff`）；
+`"downloads"` @ `package.json` 的 `scripts`
+**守护：** `test/downloads.test.ts`（尾部 0 是滞后、中间 0 不是、上报前的日子不算安静日、
+`rolloff` 按日历日算、epoch 也是日期）
+**改之前先读** [`RELEASING.md`](RELEASING.md) 的「发版之后看什么」一节 —— 两种误读与脚本的四件事。
+**不要**把 `--fail-below` 写进 CI：会随口径波动变红的检查，只会训练所有人忽略红色。
 
 ---
 
