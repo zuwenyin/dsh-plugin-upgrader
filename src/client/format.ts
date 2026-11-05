@@ -111,6 +111,40 @@ export function resolveVersionLink(
   return typeof raw === 'string' && /^https?:\/\//i.test(raw) ? raw : undefined
 }
 
+/**
+ * Turn the host's version-error sentence into something a reader can act on.
+ *
+ * The host reports a handful of version problems as fixed English sentences,
+ * because `versionError` is part of what it reports and the client is not its
+ * only reader. They still have to reach a Chinese reader in Chinese, so the
+ * known ones are translated here. Anything unrecognised — a registry error, a
+ * network failure — is passed through untouched: that text is often the only
+ * clue in the row, and paraphrasing it would hide the one word that identifies
+ * the cause.
+ *
+ * @param failure - the host's `versionError`, when it has one.
+ * @param t - the translator.
+ * @returns the text to show, or undefined when there is nothing wrong.
+ */
+export function versionNoteOf(failure: string | undefined, t: T): string | undefined {
+  if (failure === undefined || failure === '') return undefined
+  if (failure === 'not a profile-managed package') return t('sourcePath')
+  if (failure === 'version unknown') return t('unknownVersion')
+  if (failure === 'local path install: the registry has no published copy') return t('pathNoPublished')
+  if (failure === 'local path install: the version comes from the directory, not the registry') {
+    return t('pathFromDirectory')
+  }
+  if (failure === 'registry lookup failed') return t('registryLookupFailed')
+  /*
+   * `<kind> source: no registry history` is the host naming the install kind it
+   * recognised. The kind itself is data (`git`, `tarball`), not prose, so it is
+   * carried into the sentence rather than looked up.
+   */
+  const match = /^([a-z]+) source: no registry history$/.exec(failure)
+  if (match !== null) return t('noRegistryHistory', match[1])
+  return failure
+}
+
 /** A failed host request. */
 export interface RequestFailure extends Error {
   status: number

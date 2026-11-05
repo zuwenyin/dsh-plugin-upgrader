@@ -102,6 +102,32 @@ export interface OverviewRow {
    * declared requirement excludes this runtime.
    */
   blocked?: { version: string; requires: string }
+  /**
+   * The DSH requirement of the release that is *already installed*, when that
+   * release cannot run here.
+   *
+   * This is the mirror image of {@link blocked}: `blocked` says "the newer one
+   * would be refused", this says "the one you are running was never allowed".
+   * Without it a plugin that DSH has already silently stopped activating looks
+   * like an ordinary up-to-date row, because every field that describes it is
+   * about the versions it could move to.
+   *
+   * Read from the registry's copy of the installed version. A `link:`/`file:`
+   * install is deliberately left out: the local directory is authoritative
+   * there, and judging it by the published manifest of the same version number
+   * would report a requirement that is not the one actually declared.
+   */
+  installedIncompatible?: { requires: string }
+  /**
+   * The newest release this runtime is allowed to install, above the installed
+   * one.
+   *
+   * Equal to {@link latest} in the ordinary case. It differs when `latest`
+   * cannot run here: the row then offers the best release it *can* install
+   * instead of going dead. Never above `latest` — a prerelease published after
+   * the tag is not something this tab gets to promote (AGENTS.md §5).
+   */
+  recommended?: string
 }
 
 /** The whole overview response body. */
@@ -277,6 +303,41 @@ export async function buildOverview(
         entry.upgradable = false
         entry.blocked = { version: head.version, requires: head.requires ?? '' }
       }
+    }
+    /*
+     * The best release this runtime can actually install. `versions` is already
+     * sorted newest first, and `compatible` is only ever `false` when the host
+     * gate would refuse the install, so the first allowed entry above the
+     * installed version is the answer. It is usually `latest` itself; when it
+     * is not, the row keeps a working button instead of a dead one that only
+     * explains why it cannot be pressed.
+     */
+    const recommended = shaped.versions.find(
+      (version) =>
+        version.compatible !== false &&
+        compareVersions(version.version, bundle.version ?? '') > 0 &&
+        entry.latest !== undefined &&
+        compareVersions(version.version, entry.latest) <= 0,
+    )
+    if (recommended !== undefined) {
+      entry.recommended = recommended.version
+      /*
+       * `blocked` above turned the upgrade off because `latest` would be
+       * refused. If some other release does pass the gate, the row is still
+       * upgradable — to that one. Without this the whole row goes dead, which is
+       * the state a person cannot act on.
+       */
+      entry.upgradable = true
+    }
+    /*
+     * The release that is installed can be incompatible too, and that is the
+     * worse half of the same story: DSH already refuses to activate it, so the
+     * tab is looking at a plugin that is not running. `blocked` never covered
+     * this — it is computed from `latest`, not from what is on disk.
+     */
+    const current = shaped.versions.find((version) => version.current === true)
+    if (current !== undefined && current.compatible === false) {
+      entry.installedIncompatible = { requires: current.requires ?? '' }
     }
     /*
      * Ask the upstream registry what this mirror is missing. The mirror's own

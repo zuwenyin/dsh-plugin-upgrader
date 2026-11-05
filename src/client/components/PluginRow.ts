@@ -9,7 +9,7 @@
  * @module dsh-plugin-upgrader/client/components/PluginRow
  */
 import { getH, getReact } from '../env.ts'
-import { openExternal } from '../format.ts'
+import { openExternal, versionNoteOf } from '../format.ts'
 import type { OverviewRow, RowActions, T } from '../types.ts'
 import { VersionLine } from './VersionLine.ts'
 
@@ -54,13 +54,27 @@ export function PluginRow(props: PluginRowProps): unknown {
    */
   const failure = row.versionError !== undefined && row.versionError !== '' ? row.versionError : undefined
   const retriable = failure !== undefined && /unreachable|timeout|registry \d|github/i.test(failure)
-  const versionNote =
-    failure === undefined
-      ? undefined
-      : failure === 'not a profile-managed package'
-        ? t('sourcePath')
-        : failure
+  /*
+   * The host reports a handful of version problems as fixed English sentences,
+   * because the client is not the only reader of `versionError` and the strings
+   * are part of what it reports. They still have to reach a Chinese reader in
+   * Chinese, so `versionNoteOf` translates the known ones and passes anything
+   * unrecognised (a registry error, a network failure) through exactly as it
+   * arrived — that text is often the only clue, and paraphrasing it would hide
+   * it.
+   */
+  const versionNote = versionNoteOf(failure, t)
   const pendingBuilds = Array.isArray(row.pendingBuilds) ? row.pendingBuilds : []
+  /**
+   * The version the upgrade button would actually install.
+   *
+   * `latest` is not always installable — the host refuses a release whose
+   * `engines.dsh` the runtime does not satisfy — and in that case the row used
+   * to lose its button entirely and show only an explanation. `recommended` is
+   * the newest release that does pass, so the button keeps working and says
+   * which version it means, because it is not the newest one.
+   */
+  const target = row.recommended ?? row.latest
 
   return h(
     'div',
@@ -138,6 +152,33 @@ export function PluginRow(props: PluginRowProps): unknown {
               t('incompatibleLatest', row.blocked.version, row.blocked.requires),
             )
           : null,
+        /*
+         * `blocked` talks about the newest release; this one is about what is on
+         * disk right now. When the installed version itself is incompatible the
+         * plugin is already not running, and no amount of "upgrade later" helps
+         * — so it is stated separately rather than folded into the note above.
+         */
+        row.installedIncompatible !== undefined
+          ? h(
+              'div',
+              {
+                className: 'dsh-pu-note is-err',
+                title: t('installedIncompatible', row.version ?? t('unknownVersion'), row.installedIncompatible.requires),
+              },
+              t('installedIncompatible', row.version ?? t('unknownVersion'), row.installedIncompatible.requires),
+            )
+          : null,
+        /*
+         * A working button that silently installs something other than `latest`
+         * would be worse than no button, so the row says which version it means.
+         */
+        row.upgradable && target !== undefined && target !== row.latest
+          ? h(
+              'div',
+              { className: 'dsh-pu-note', title: t('recommendedHint', target) },
+              t('recommendedHint', target),
+            )
+          : null,
         failure !== undefined && retriable
           ? h(
               'div',
@@ -162,22 +203,23 @@ export function PluginRow(props: PluginRowProps): unknown {
         'div',
         { className: 'dsh-pu-vers' },
         h('b', null, row.version ?? t('unknownVersion')),
-        row.upgradable ? h('i', null, '→') : null,
-        row.upgradable ? h('b', null, row.latest) : null,
+        row.upgradable && target !== undefined ? h('i', null, '→') : null,
+        row.upgradable && target !== undefined ? h('b', null, target) : null,
       ),
       h(
         'div',
         { className: 'dsh-pu-row-actions' },
-        row.upgradable
+        row.upgradable && target !== undefined
           ? h(
               'button',
               {
                 type: 'button',
                 className: 'dsh-pu-btn is-primary is-tiny',
                 disabled: busy,
+                title: target === row.latest ? t('upgrade') : t('recommendedHint', target),
                 onClick: () => onUpgrade(row),
               },
-              t('upgrade'),
+              target === row.latest ? t('upgrade') : t('upgradeTo', target),
             )
           : selfUpdate && typeof onInstallSelf === 'function'
             ? h(

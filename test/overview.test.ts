@@ -229,6 +229,105 @@ test('a compatible upgrade stays an ordinary upgrade', async () => {
     assert.ok(row !== undefined)
     assert.equal(row.upgradable, true)
     assert.equal(row.blocked, undefined)
+    // When the newest release is installable it is also the recommendation, so
+    // the button and the version beside it agree.
+    assert.equal(row.recommended, '1.1.0')
+    assert.equal(row.installedIncompatible, undefined)
+  } finally {
+    restore()
+  }
+})
+
+test('an older compatible release is offered when the newest one is refused', async () => {
+  /*
+   * The dead-row bug: `latest` declared a DSH range this runtime does not
+   * satisfy, so the row set `blocked` and dropped `upgradable` — while 1.1.0 sat
+   * in the same list, installable. The person saw an explanation and no way to
+   * act on it, which reads as "this plugin cannot be managed".
+   */
+  const restore = stubPeers(
+    { '1.0.0': '', '1.1.0': '', '1.2.0': '>=0.2.0-rc.2 <0.3.0-0' },
+    '1.2.0',
+  )
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      { runtimeVersion: '0.1.6' },
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.equal(row.latest, '1.2.0')
+    assert.equal(row.blocked?.version, '1.2.0')
+    assert.equal(row.recommended, '1.1.0')
+    assert.equal(row.upgradable, true)
+  } finally {
+    restore()
+  }
+})
+
+test('the newest release never loses to a prerelease published after it', async () => {
+  /*
+   * `recommended` is the newest *installable* release, not the newest one in
+   * the document. A prerelease published after the tagged `latest` must not be
+   * promoted by this page (AGENTS.md §5): the tag is what the publisher chose.
+   */
+  const restore = stubPeers({ '1.0.0': '', '1.1.0': '', '1.2.0-rc.1': '' }, '1.1.0')
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      { runtimeVersion: '0.2.1-rc.5' },
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.equal(row.latest, '1.1.0')
+    assert.equal(row.recommended, '1.1.0')
+  } finally {
+    restore()
+  }
+})
+
+test('the installed version itself can be the incompatible one', async () => {
+  /*
+   * `blocked` is computed from `latest`, so a plugin whose *installed* release
+   * is incompatible looked perfectly healthy: up to date, nothing to do. The
+   * host is refusing to activate that very version, so the tab has to say so.
+   */
+  const restore = stubPeers({ '1.0.0': '>=0.2.0-rc.2 <0.3.0-0', '1.1.0': '' }, '1.1.0')
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      { runtimeVersion: '0.1.6' },
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.deepEqual(row.installedIncompatible, { requires: '>=0.2.0-rc.2 <0.3.0-0' })
+    // The upgrade is still offered — moving to 1.1.0 is exactly the fix.
+    assert.equal(row.upgradable, true)
+    assert.equal(row.recommended, '1.1.0')
+  } finally {
+    restore()
+  }
+})
+
+test('nothing is claimed about the installed version when the runtime is unknown', async () => {
+  const restore = stubPeers({ '1.0.0': '>=0.2.0-rc.2 <0.3.0-0', '1.1.0': '' }, '1.1.0')
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      {},
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.equal(row.installedIncompatible, undefined)
+    assert.equal(row.recommended, '1.1.0')
   } finally {
     restore()
   }

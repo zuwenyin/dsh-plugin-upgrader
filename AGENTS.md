@@ -44,6 +44,7 @@
 | journal 本身的格式与「一条记录属于谁」 | §23 · [23-journal-per-package](docs/rules/23-journal-per-package.md) |
 | 回滚之后那一行怎么说、`rolledBack` / `inactive` | §24 · [24-rollback-inactive](docs/rules/24-rollback-inactive.md) |
 | 判断「有没有人在用」、下载量脚本 | §25 · [RELEASING.md](RELEASING.md) |
+| `recommended` / `installedIncompatible` / 体检与诊断 | §26 · [26-compatibility-dead-end](docs/rules/26-compatibility-dead-end.md) |
 
 ---
 
@@ -444,6 +445,49 @@ called "not installed"`、`a rollback that is refused says so instead of pretend
 `rolloff` 按日历日算、epoch 也是日期）
 **改之前先读** [`RELEASING.md`](RELEASING.md) 的「发版之后看什么」一节 —— 两种误读与脚本的四件事。
 **不要**把 `--fail-below` 写进 CI：会随口径波动变红的检查，只会训练所有人忽略红色。
+
+---
+
+## 26. 不兼容不能是一条死路
+
+**不可退化。** 宿主的兼容性闸门是**在 bundle 已经卸下之后**才拒绝的（§20）。所以「这个
+版本装不了」这句话必须当场说清，并且**必须同时给出能装的那个版本**——否则用户唯一的
+出路是手动编辑 profile 或换个工具，而页面上看起来只是「没有更新」。
+
+- **「新的那个会被拒」和「你在跑的那个从来不被允许」是两件事。** 前者是
+  `blocked`（看 `latest`），后者是 `installedIncompatible`（看 current 行）。后者更严重：
+  插件现在很可能根本没有被加载，而升级按钮与它无关，必须单独一行说出来。
+- **`latest` 装不了不等于没有可装版本。** 只要还有更高的兼容版本，就必须给
+  `recommended`，并且**重新打开 `upgradable`**（`blocked` 关掉的那个按钮）。
+- **按钮/批量的目标只有一处：`recommended ?? latest`。** 任何地方再出现
+  `row.latest` 当安装目标，这条就退回成「行是死的」；客户端统一走 `targetOf(row)`。
+- **`recommended` 永不高于 `latest`。** tag 之后发布的 prerelease 不许被这个页提拔，
+  理由同 §5。没有 `latest` 时不定 `recommended`。
+- **读不到 DSH 版本就不判。** `runtimeVersion` 为 null 时既不设 `installedIncompatible`
+  也不标兼容——「不知道」不能写成「不兼容」，页脚也要如实说「DSH 版本未知」。
+- **`versionError` 是宿主对外数据，不是文案。** 本地化只发生在客户端
+  （`versionNoteOf`），host 侧继续发那几句固定的英文；未识别的原文**逐字透传**，
+  因为 registry 超时/限流那句话往往是一行里唯一的线索。`retriable` 的正则依赖原文，
+  不能顺手把 `failure` 换成本地化后的文本。
+- **「需处理」的口径不含 `blocked`、也不含「可升级」。** `blocked` 是「还没装过的发布」，
+  行内已经解释过；把它算进去，那个数字永远不会归零。口径只算**已经在这个 profile 里
+  出问题**的四件事：`installedIncompatible`、镜像落后、读不到版本、待批准构建。
+- **诊断信息走纯客户端。** `navigator.clipboard` + 拼字符串，不加路由、不新增
+  §15 的任何一个能力信号。
+
+**代码：** `installedIncompatible` / `recommended` @ `src/host/overview.ts` 与
+`src/client/types.ts`；`needsAttention` / `diagnosticsReport` @ `src/client/diagnostics.ts`；
+`versionNoteOf` @ `src/client/format.ts`；`targetOf` / `onlyNeedsAttention` / 页脚 @
+`src/client/components/Tab.ts`；`target` @ `src/client/components/PluginRow.ts`；
+文案 `installedIncompatible` / `recommendedHint` / `upgradeTo` / `needsAttention` /
+`runtimeVersionUnknown` @ `src/client/copy.ts`
+**守护：** `test/overview.test.ts`（`an older compatible release is offered when the newest
+one is refused`、`the newest release never loses to a prerelease published after it`、
+`the installed version itself can be the incompatible one`、`nothing is claimed about the
+installed version when the runtime is unknown`）、`test/diagnostics.test.ts`（12 条）、
+`test/version-note.test.ts`（7 条）
+**改之前先读** [`docs/rules/26-compatibility-dead-end.md`](docs/rules/26-compatibility-dead-end.md)
+—— 宿主的闸门时序、为什么 `blocked` 不计入体检、以及「读不到 ≠ 不兼容」的来由
 
 ---
 

@@ -69,6 +69,25 @@ export interface OverviewRow {
    * read and did not admit this runtime.
    */
   blocked?: { version: string; requires: string }
+  /**
+   * The release that is *already installed* declares a requirement this DSH
+   * version does not meet.
+   *
+   * The worse half of the same story as {@link blocked}: the host has already
+   * refused to activate it, so the plugin is on disk but not running. `blocked`
+   * only ever describes `latest`, so without this a plugin that stopped working
+   * after a DSH upgrade looked like an ordinary up-to-date row.
+   */
+  installedIncompatible?: { requires: string }
+  /**
+   * The newest release this runtime may install, above the installed one.
+   *
+   * Equal to {@link latest} in the ordinary case; lower when `latest` cannot run
+   * here. The row's button targets this instead of a release the host would
+   * refuse, so "there is a newer version, but not for you" still has a way
+   * forward.
+   */
+  recommended?: string
 }
 
 /** The overview response body. */

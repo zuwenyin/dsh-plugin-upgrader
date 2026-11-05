@@ -12,6 +12,7 @@
 import { cancelJob, submitJob, useOverview, watchJob } from '../api.ts'
 import { reloadWhenBootDocumentFresh } from '../boot.ts'
 import { getH, getReact } from '../env.ts'
+import { diagnosticsReport, needsAttention } from '../diagnostics.ts'
 import { activeLocaleId, replacedAppearance, useAlive, useLocaleRevision } from '../hooks.ts'
 import { useRegistrySetting } from '../registry.ts'
 import { CSS, STYLE_ID } from '../styles.ts'
@@ -73,6 +74,16 @@ export function Tab(props: TabProps): unknown {
   const registry = useRegistrySetting(configForms, 'plugin-upgrader')
 
   const [query, setQuery] = React.useState('')
+  /**
+   * Whether the list is filtered down to the rows that need a decision.
+   *
+   * Kept apart from `query` on purpose: the two filters answer different
+   * questions ("which plugin did I type" and "which ones need me") and a person
+   * who typed a name should still be able to see only the broken ones among the
+   * matches.
+   */
+  const [onlyNeedsAttention, setOnlyNeedsAttention] = React.useState(false)
+  const [diagnosticsCopied, setDiagnosticsCopied] = React.useState(false)
   const [picked, setPicked] = React.useState<Set<string>>(() => new Set<string>())
   const [job, setJob] = React.useState<JobSnapshot | undefined>(undefined)
   const [busyName, setBusyName] = React.useState<string | undefined>(undefined)
@@ -266,13 +277,16 @@ export function Tab(props: TabProps): unknown {
    */
   const batchable = (row: OverviewRow): boolean => row.upgradable === true && row.name !== SELF_NAME
   const upgradable = rows.filter(batchable)
+  const attention = rows.filter(needsAttention)
   const needle = query.trim().toLowerCase()
-  const filtered =
-    needle === ''
-      ? rows
-      : rows.filter(
-          (row) => row.name.toLowerCase().includes(needle) || String(row.title ?? '').toLowerCase().includes(needle),
-        )
+  const filtered = rows
+    .filter((row) => (onlyNeedsAttention ? needsAttention(row) : true))
+    .filter(
+      (row) =>
+        needle === '' ||
+        row.name.toLowerCase().includes(needle) ||
+        String(row.title ?? '').toLowerCase().includes(needle),
+    )
 
   const busy = busyName !== undefined || (job !== undefined && (job.status === 'running' || job.status === 'queued'))
 
@@ -302,8 +316,18 @@ export function Tab(props: TabProps): unknown {
     ...(approveBuilds === undefined ? {} : { approveBuilds }),
   })
 
+  /**
+   * The version an upgrade of this row should install.
+   *
+   * `latest` is not always the answer: the host refuses a release whose DSH
+   * requirement this runtime does not meet, and `recommended` is the newest one
+   * that passes. Both the row button and every batch path go through here, so a
+   * batch cannot quietly install a version the single-row button declined to.
+   */
+  const targetOf = (row: OverviewRow): string => row.recommended ?? row.latest ?? row.version ?? ''
+
   const upgradeOne = (row: OverviewRow): void => {
-    void run([stepOf(row, row.latest ?? row.version ?? '', 'upgrade')], row.name)
+    void run([stepOf(row, targetOf(row), 'upgrade')], row.name)
   }
 
   const switchOne = (row: OverviewRow, version: string): void => {
@@ -312,7 +336,7 @@ export function Tab(props: TabProps): unknown {
 
   const approveAndRetry = (row: OverviewRow): void => {
     const pendingBuilds = Array.isArray(row.pendingBuilds) ? row.pendingBuilds : []
-    void run([stepOf(row, row.latest ?? row.version ?? '', 'upgrade', pendingBuilds)], row.name)
+    void run([stepOf(row, targetOf(row), 'upgrade', pendingBuilds)], row.name)
   }
 
   /**
@@ -341,7 +365,7 @@ export function Tab(props: TabProps): unknown {
 
   const upgradeAll = (): void => {
     void run(
-      upgradable.map((row) => stepOf(row, row.latest ?? row.version ?? '', 'upgrade')),
+      upgradable.map((row) => stepOf(row, targetOf(row), 'upgrade')),
       t('upgradeAll'),
     )
   }
@@ -367,9 +391,30 @@ export function Tab(props: TabProps): unknown {
     void run(
       upgradable
         .filter((row) => picked.has(row.name))
-        .map((row) => stepOf(row, row.latest ?? row.version ?? '', 'upgrade')),
+        .map((row) => stepOf(row, targetOf(row), 'upgrade')),
       t('upgradeSelected'),
     )
+  }
+
+  /**
+   * Put what this tab knows on the clipboard, as markdown.
+   *
+   * The point is a bug report someone can paste without transcribing versions
+   * by hand — and the reason it is built in the browser rather than on the host
+   * is that the host already sends everything it has: `runtimeVersion`, every
+   * row's `versionError`, `blocked`, `installedIncompatible`, the mirror gap. A
+   * new route would be a second way to ask the same question, and a new place
+   * for `capabilities` to grow.
+   */
+  const copyDiagnostics = (): void => {
+    const text = diagnosticsReport(
+      { runtimeVersion: data?.runtimeVersion, registry: data?.registry, generatedAt: data?.generatedAt, rows },
+      t,
+    )
+    void navigator.clipboard
+      ?.writeText(text)
+      .then(() => setDiagnosticsCopied(true))
+      .catch(() => {})
   }
 
   const cancel = (): void => {
@@ -400,6 +445,27 @@ export function Tab(props: TabProps): unknown {
             ' ',
             h('b', null, String(upgradable.length)),
           ),
+          /*
+           * The one number that answers "is anything wrong?". It is a button, not
+           * a label: a count nobody can act on only adds a second thing to read.
+           * Zero is rendered as plain text so the header does not grow a control
+           * that would do nothing when pressed.
+           */
+          attention.length > 0
+            ? h(
+                'button',
+                {
+                  type: 'button',
+                  className: `dsh-pu-stat is-err is-action${onlyNeedsAttention ? ' is-on' : ''}`,
+                  title: t('onlyNeedsAttention'),
+                  'aria-pressed': onlyNeedsAttention ? 'true' : 'false',
+                  onClick: () => setOnlyNeedsAttention((value) => !value),
+                },
+                t('needsAttention'),
+                ' ',
+                h('b', null, String(attention.length)),
+              )
+            : null,
           data?.registry === undefined
             ? null
             : h(RegistrySourceButton, {
@@ -432,6 +498,23 @@ export function Tab(props: TabProps): unknown {
           loading === true ? h('span', { className: 'dsh-pu-spin' }) : null,
           loading === true ? t('refreshing') : t('refresh'),
         ),
+        /*
+         * Only drawn when there is something to put in it. The overview is also
+         * fetched by hosts that mount no manager at all, and a button that copies
+         * an empty report is worse than no button.
+         */
+        rows.length > 0
+          ? h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-pu-btn',
+                onClick: copyDiagnostics,
+                title: t('copyDiagnostics'),
+              },
+              diagnosticsCopied ? t('copied') : t('copyDiagnostics'),
+            )
+          : null,
         h(
           'button',
           {
@@ -540,7 +623,29 @@ export function Tab(props: TabProps): unknown {
       : null,
 
     filtered.length === 0 && rows.length > 0
-      ? h('div', { className: 'dsh-pu-empty' }, h('span', null, t('noMatch')))
+      ? h(
+          'div',
+          { className: 'dsh-pu-empty' },
+          h(
+            'span',
+            null,
+            // "No match" would be the wrong word when the only filter is the
+            // attention toggle: nothing was searched for, and the answer is good
+            // news rather than a typo.
+            onlyNeedsAttention && needle === '' ? t('nothingNeedsAttention') : t('noMatch'),
+          ),
+          onlyNeedsAttention
+            ? h(
+                'div',
+                null,
+                h(
+                  'button',
+                  { type: 'button', className: 'dsh-pu-btn is-tiny', onClick: () => setOnlyNeedsAttention(false) },
+                  t('showAll'),
+                ),
+              )
+            : null,
+        )
       : null,
 
     filtered.length === 0
@@ -574,6 +679,24 @@ export function Tab(props: TabProps): unknown {
     h(
       'div',
       { className: 'dsh-pu-foot' },
+      /*
+       * Which DSH this page is judging against.
+       *
+       * Every compatibility answer on this screen is relative to one version, and
+       * until it was printed the only way to know it was to read `engines` and
+       * compare by hand. "Unknown" is said out loud rather than hidden: an empty
+       * space here would look like the plugin is fine.
+       */
+      h(
+        'span',
+        {
+          className: `dsh-pu-mono${data?.runtimeVersion === null || data?.runtimeVersion === undefined ? ' is-warn' : ''}`,
+          title: data?.runtimeVersion === null || data?.runtimeVersion === undefined ? t('runtimeUnknown') : undefined,
+        },
+        data?.runtimeVersion === null || data?.runtimeVersion === undefined
+          ? t('runtimeVersionUnknown')
+          : `DSH ${data.runtimeVersion}`,
+      ),
       data?.generatedAt === undefined
         ? null
         : h('span', null, `${t('generated')} ${new Date(data.generatedAt).toLocaleTimeString()}`),

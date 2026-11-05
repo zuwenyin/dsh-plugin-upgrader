@@ -23,6 +23,11 @@ export const CSS = `
 .dsh-pu-stat { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); }
 .dsh-pu-stat b { color: var(--dsw-alias-label-primary); font-weight: 600; }
 .dsh-pu-stat.is-warn b { color: var(--dsw-alias-brand-primary); }
+.dsh-pu-stat.is-err b { color: var(--dsw-alias-label-danger, #d33); }
+.dsh-pu-stat.is-action { font-family: inherit; font-size: 12px; cursor: pointer; }
+.dsh-pu-stat.is-action:hover { border-color: var(--dsw-alias-label-danger, #d33); }
+.dsh-pu-stat.is-action.is-on { background: var(--dsw-alias-bg-layer-2); border-color: var(--dsw-alias-label-danger, #d33); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-label-danger, #d33) 18%, transparent); }
+.dsh-pu-mono.is-warn { color: var(--dsw-alias-brand-primary); }
 .dsh-pu-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .dsh-pu-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); transition: background .15s ease, border-color .15s ease, opacity .15s ease; font-family: inherit; }
 .dsh-pu-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); border-color: var(--dsw-alias-border-l2); }

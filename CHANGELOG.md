@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.8.0 — 2026-11-05
+
+- **A row whose newest release the host refuses is no longer a dead row.** The tab marked
+  `latest` as `blocked` and turned `upgradable` off, which is correct but leaves nothing to
+  click: the plugin really does have an installable release, it is just not the newest one.
+  The overview now carries `recommended` — the highest release above the installed version
+  that this runtime can install — and the button, its tooltip ("Upgrade to 1.1.0") and every
+  batch target use it. It never goes above `latest`, so a prerelease published after the tag
+  cannot be promoted by this page (the same rule as the broken-tag guard). `test/overview.test.ts`
+  grew four cases for it, including that bound.
+- **The version you are running can be the incompatible one, and nothing said so.** `blocked`
+  is computed from `latest`; when `latest` passes the gate it never appears, even if the
+  installed version declares a DSH range the running host has been outside since the last
+  upgrade. That case is now `installedIncompatible` with its own sentence, because it means
+  something worse than "the update would be refused": the plugin is most likely not loaded at
+  all right now. It stays separate from `blocked` rather than merged into it.
+- **A "needs attention" count, and the version errors are translated.** The header gained a
+  fourth stat that counts the plugins that are actually broken in this profile —
+  `installedIncompatible`, a lagging mirror, a version that could not be read, a build waiting
+  for approval. It deliberately excludes `blocked` (a release you never installed is not a
+  problem you can fix) and excludes ordinary upgrades, so the number can reach zero. Clicking
+  it filters the list, and it stacks with the search box. The six version-error sentences the
+  host returns are fixed English API values (`'registry lookup failed'`,
+  `'local path install: …'`, `` `<kind> source: no registry history` ``); they are now
+  translated on the client, and anything unrecognised is passed through word for word, because
+  a registry timeout is usually the only clue in the row.
+- **Copy diagnostics.** One button copies a markdown summary — DSH version, registry, timestamp,
+  every plugin with its versions and every problem found — to paste into an issue. It is built
+  entirely on the client from data the page already has: no new route, no new request, no new
+  capability signal.
+- **The footer says which DSH you are running.** `runtimeVersion` was already in the payload and
+  had never been displayed; every compatibility judgement in this tab depends on it, so a bug
+  report that names the version is worth more than a guess. When it cannot be read the footer
+  says so instead of leaving the space blank, since "unknown" must never look like "compatible".
+
 ## 1.7.5 — 2026-11-04
 
 - **A rollback that installed the old version but could not activate it was reported as "not

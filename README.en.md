@@ -53,6 +53,29 @@ English · [中文](./README.md)
   restart for the way you started the host: quit and reopen the desktop app, or paste
   back the command a terminal start used. After you confirm, it watches the host's pid
   and reloads only once a different process answers, instead of leaving you guessing.
+- **When the newest release cannot run here, it names the one that can** — the host's
+  compatibility gate speaks only after the bundle has already been taken down, so a
+  `latest` your DSH refuses must never turn the row into a dead button. The tab computes
+  the highest release above the installed version that this runtime can actually
+  install, the button reads "Upgrade to 1.1.0", and batch upgrades go to the same
+  target. That recommendation never goes above `latest`, so a prerelease published
+  after the tag cannot be promoted by this page.
+- **The version you are already running can be the incompatible one** — the rule above
+  is computed from `latest`. If what is *installed* declares a DSH range the host has
+  been outside since your last DSH upgrade, the plugin is most likely not loaded at
+  all, and an upgrade button does not fix that. Such a row says so on its own line.
+- **A "needs attention" count that can reach zero** — a fourth header stat counts only
+  the plugins actually broken in this profile: an installed version outside its range, a
+  lagging mirror, a version that could not be read, a build waiting for approval.
+  Clicking it filters the list, and it stacks with the search box. It deliberately
+  excludes "an update exists that you cannot install": that is not a state you can fix,
+  and counting it would keep the number above zero forever.
+- **Copy diagnostics in one click** — DSH version, registry, every row with its versions
+  and every problem, as markdown for an issue. Built entirely on the client: no new
+  route, no new request, no new capability declaration.
+- **The footer names the DSH you are running** — every compatibility judgement in this
+  tab is based on it, and when it cannot be read the footer says so rather than leaving
+  the space blank, because "unknown" must not look like "compatible".
 
 ![Source manager](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/sources.png)
 
@@ -67,7 +90,9 @@ A **Versions** tab appears next to *Installed* and the market tab on the Plugins
 page (that tab is **Market** with `dshmarket` installed, and **Discover** in DSH's
 own market page):
 
-- Header counts: upgradable / installed / version count
+- Header counts: needing attention / upgradable / installed / version count
+  (the first is a button: it narrows the list to the broken rows and stacks with the
+  search box)
 - The header **Registry** control opens the source dialog:
   - built-in sources (official registry, mainland mirror): switch to and test, never edit
     or delete
@@ -83,6 +108,9 @@ own market page):
   **Upgrade selected**
 - **Check for updates** bypasses the 5-minute registry cache
 - The search box filters by package name
+- The footer names the DSH version this page read, and which registry the list came from
+- **Copy diagnostics** turns the versions, the registry and every row's problems into
+  markdown, ready to paste into an issue
 - One row per plugin; **history (n)** expands the full version list
 - `GH` opens the repository homepage (hidden for plugins without one)
 - Each version number is itself a link to GitHub:

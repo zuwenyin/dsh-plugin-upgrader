@@ -45,6 +45,34 @@ export interface OverviewRow {
         version: string;
         requires: string;
     };
+    /**
+     * The DSH requirement of the release that is *already installed*, when that
+     * release cannot run here.
+     *
+     * This is the mirror image of {@link blocked}: `blocked` says "the newer one
+     * would be refused", this says "the one you are running was never allowed".
+     * Without it a plugin that DSH has already silently stopped activating looks
+     * like an ordinary up-to-date row, because every field that describes it is
+     * about the versions it could move to.
+     *
+     * Read from the registry's copy of the installed version. A `link:`/`file:`
+     * install is deliberately left out: the local directory is authoritative
+     * there, and judging it by the published manifest of the same version number
+     * would report a requirement that is not the one actually declared.
+     */
+    installedIncompatible?: {
+        requires: string;
+    };
+    /**
+     * The newest release this runtime is allowed to install, above the installed
+     * one.
+     *
+     * Equal to {@link latest} in the ordinary case. It differs when `latest`
+     * cannot run here: the row then offers the best release it *can* install
+     * instead of going dead. Never above `latest` — a prerelease published after
+     * the tag is not something this tab gets to promote (AGENTS.md §5).
+     */
+    recommended?: string;
 }
 /** The whole overview response body. */
 export interface Overview {
