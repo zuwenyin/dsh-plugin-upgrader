@@ -370,6 +370,99 @@ test('an empty approval list is left out instead of sent as empty', async () => 
   assert.equal(calls.install[0]?.options?.approvedBuilds, undefined)
 })
 
+test('an approval is never presented a second time', async () => {
+  /*
+   * The reported bug, as a shape: `approvedBuilds` names a `name@version` that
+   * the manager is still waiting on, and the first pnpm run answers it. Handing
+   * the same names to the retry after the removal — or, worse, to the rollback —
+   * gets `stale-approval` before pnpm starts, which replaced the real failure
+   * (a peer dependency the package's own postinstall needs) with a word that
+   * explains nothing, and made the rollback fail too. The plugin was then gone
+   * from the profile.
+   */
+  await withProfile({ name: 'desktop', dependencies: { pkg: '1.0.0' } }, async () => {
+    const { manager, calls } = fakeManager({
+      installs: (call) => {
+        if (call === 0) return refused('already-installed', 'install')
+        if (call === 1) return new Error('postinstall: peer @earendil-works/pi-ai is missing')
+        if (call === 2) return new Error('postinstall: peer @earendil-works/pi-ai is missing')
+        return applied({ version: '1.0.0' })
+      },
+    })
+    const listed = [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+    ]
+    let reads = 0
+    manager.listBundles = async () => (reads++ === 0 ? listed : [])
+
+    const log: string[] = []
+    await runStep(
+      manager,
+      { name: 'pkg', version: '2.0.0', approveBuilds: ['pkg@2.0.0'] },
+      (line) => log.push(line),
+    )
+
+    assert.deepEqual(
+      calls.install.map((entry) => entry.options?.approvedBuilds),
+      [['pkg@2.0.0'], ['pkg@2.0.0'], undefined, undefined],
+      'the first install and the in-place replacement may ask; the retry and the rollback may not',
+    )
+    assert.match(log.join('\n'), /rollback|rolled back|back where it was/)
+  })
+})
+
+test('a settled approval is repaired instead of reported', async () => {
+  /*
+   * Somebody already answered the question — with `pnpm approve-builds`, or by
+   * spending the approval on an earlier attempt. The manager then refuses the
+   * whole call before pnpm runs, so nothing is wrong with the package: dropping
+   * the credential and asking once more installs it.
+   */
+  const { manager, calls } = fakeManager({
+    installs: (call) => (call === 0 ? refused('stale-approval', 'install') : applied({ version: '2.0.0' })),
+  })
+  const log: string[] = []
+  const outcome = await runStep(
+    manager,
+    { name: 'pkg', version: '2.0.0', approveBuilds: ['pkg@2.0.0'] },
+    (line) => log.push(line),
+  )
+
+  assert.equal(outcome.ok, true)
+  assert.equal(calls.install.length, 2)
+  assert.equal(calls.install[1]?.options?.approvedBuilds, undefined)
+  assert.match(log.join('\n'), /no longer waiting for approval/)
+})
+
+test('the stale approval does not travel into the rollback either', async () => {
+  /*
+   * The second half of the same bug. A refusal is reported as a result, not a
+   * throw, so it walks straight into the shared tail and from there into the
+   * rollback. If the credential survives that, the rollback is refused too —
+   * and a failed upgrade takes the plugin out of the profile.
+   */
+  await withProfile({ name: 'desktop', dependencies: { pkg: '1.0.0' } }, async () => {
+    const { manager, calls } = fakeManager({
+      installs: (call) => {
+        if (call === 0) return refused('stale-approval', 'install')
+        if (call === 1) return refused('stale-approval', 'install')
+        return applied({ version: '1.0.0' })
+      },
+    })
+    const listed = [
+      { name: 'pkg', version: '1.0.0', installed: true, enabled: true, availability: 'profile', removable: true } as BundleInfo,
+    ]
+    let reads = 0
+    manager.listBundles = async () => (reads++ === 0 ? listed : [])
+
+    await runStep(manager, { name: 'pkg', version: '2.0.0', approveBuilds: ['pkg@2.0.0'] }, () => {})
+
+    const rollback = calls.install.find((entry) => entry.spec === 'pkg@1.0.0')
+    assert.notEqual(rollback, undefined, 'the rollback has to run at all')
+    assert.equal(rollback?.options?.approvedBuilds, undefined, 'an approval for 2.0.0 does not name 1.0.0')
+  })
+})
+
 test('a re-install that fails puts the selection back', async () => {
   /*
    * The removal already deselected the bundle. A failure after it leaves the
