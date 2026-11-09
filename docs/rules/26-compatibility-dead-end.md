@@ -178,6 +178,74 @@ export function needsAttention(row: OverviewRow): boolean {
 
 「可升级」同理不计入——那是好事，不是需要处理的事。
 
+## 七之二、待批准构建：manager 不给的，只能自己读
+
+这一条是 2026-11-09 的 bug 报告逼出来的（用户点了「一键升级」10 个，`dsh-xdpool@2.6.4`
+每次都失败，页面只回一段 ETIMEDOUT 的 pnpm 日志，没有别的话可说）。
+
+**链路本来是通的，只有一处空着。** `PluginRow` 有 `pendingBuilds` 横幅和「批准并重启」按钮，
+`Tab.approveAndRetry` 会把它们当 `approveBuilds` 发下去，`runStep` 会把它塞进
+`installBundle` 的 options，manager 在 pnpm 之前调 `approveBuilds(dir, names)`。但
+`overview.ts` 从来没填过 `pendingBuilds`——于是那条横幅在真实数据下永远不出现，只有测试里
+手写的行才出现过。
+
+**为什么必须自己读：** manager 的 `pendingBuilds` 只在 **失败** 的 `installBundle` 返回值里
+出现（`lib/index.js:2057` 附近 `recordPendingBuilds` → `throw new Error(run.output)`），
+`change()` 接住这个 throw 并把它变成 `application: 'failed'` 的 ChangeResult。也就是说
+**只有「刚失败过一次」才看得见**，而页面是在这之前渲染的；而且 `approveBuilds` /
+`recordPendingBuilds` / `readPolicy` 都没有从包 `exports` 出来（没有 `./build-approval`
+子路径），import 不到。
+
+所以 `src/host/builds.ts` 自己扫 profile 的 `pnpm-workspace.yaml`：
+
+```ts
+export const PENDING_BUILD = 'set this to true or false'
+const SECTION = 'allowBuilds'
+const PATTERN = /[*?]/
+```
+
+三条细节都是有来历的：
+
+- **`PENDING_BUILD` 逐字相等才认。** 这是 manager 自己写的占位符（`UNDECIDED_BUILD`）；
+  只有 `true` / `false` 是「已答复」，别的字符串一律不是。手改成 `set this to true of false`
+  就该留在「没答复」之外——那是人的错字，不是待批准。
+- **`[*?]` 跳过。** `allowBuilds` 的键可以是通配（`'@scope/*'`），那种键删不掉也答不了，
+  不该冒出来让人点。
+- **只认列 0 的顶层键切节。** 这个文件后面还有 `minimumReleaseAgeExclude:` 这种列表，
+  里面全是 `- name@a || b`，一旦「看到缩进就当 allowBuilds」就会把版本范围当成包名。
+
+`readPendingBuilds` 读不到文件返回 `[]` 而不是抛：没有 `pnpm-workspace.yaml` 是**正常状态**
+（刚建的 profile 就是这样），不是错误。
+
+**两条路都要留。** `runStep` 既从 `result.pendingBuilds` 拿（manager 读到了的情况），也
+从 diagnostic 里那句 `Ignored build scripts:` 反查（manager 读不到文件、只在 pnpm 输出里留下
+句子的情况）。两条都被哨兵验证过会红：把 diagnostic 那条断掉 → “the diagnostic alone is
+enough…” 失败；把 overview 的赋值断掉 → 两条 overview 用例失败。
+
+**批量必须跳过，而且要说明。** `batchable` 加了 `pendingBuilds` 为空的条件，否则同一个死步骤
+会被「一键升级」反复重试，每次都失败得一模一样——用户看到的是「升级失败」，看不到「有一件事
+没回答」。跳过之后 `upgradable` 仍然是 `true`（行上确实有更新版本），所以：
+
+- 「可升级 n」用 `upgradableRows`（全部），批量按钮用 `upgradable`（跳过的）——两个数字
+  不一样，旁边的横幅解释差在哪；
+- `skippedBuilds.length > 0` 时连「全部已是最新」都不能显示（`upToDate` 条件加了
+  `skippedBuilds.length === 0`）。
+
+**批准是运行别人的代码，所以只能一次一个。** 这不是可用性问题：`allowBuilds: true` 等于
+同意在安装时执行那个包带来的任意脚本。批量里代用户做这个决定，和邮箱里替人点「允许宏」
+是同一种错。文案也按这个说（`buildBlockedFailed` 两句都点明「等于同意在安装时运行它带来的
+代码」）。
+
+真机验证（2026-11-09，`D:\dsh-data\profiles\desktop`）：
+
+```
+readPendingBuilds(dir)  → ['dsh-xdpool@2.6.4']
+pendingFor(all,'protobufjs') → []   # protobufjs: true，已答复
+buildOverview(...)      → dsh-xdpool 行 upgradable=true, pending=['dsh-xdpool@2.6.4']
+```
+
+
+
 ## 八、诊断信息不新增能力信号
 
 「复制诊断信息」是 §15 里最容易被破坏的一条边界。做法刻意朴素：
@@ -223,12 +291,20 @@ export function needsAttention(row: OverviewRow): boolean {
 | `nothing is claimed about the installed version when the runtime is unknown` | 读不到 runtime → `installedIncompatible === undefined` |
 | `test/diagnostics.test.ts`（12 条） | 「需处理」的四个来源 + `blocked` 不计入 + 报告格式 |
 | `test/version-note.test.ts`（7 条） | 六句已知文案的映射 + 未知原文逐字透传 |
+| `test/builds.test.ts`（12 条） | 占位符逐字匹配、`true`/`false` 不算待批、顶层键切节、通配键跳过、引号、行尾注释、flow 映射、`pendingFor` 的 `name@` 前缀 |
+| `a build-script refusal names what has to be approved` | 失败会带 `message: 'build-blocked'` + 只含本包名的 `pendingBuilds`（整 profile 列表被 `pendingFor` 收窄） |
+| `the diagnostic alone is enough when the manager could not read the file` | manager 只留下 pnpm 输出时也能反查出待批键 |
+| `an answered script is not offered for approval again` | `allowBuilds: pkg@2.0.0: true` → `pendingBuilds === undefined`（答复过的不再问） |
+| `an ordinary failure is not relabelled as a build refusal` | 普通失败不会被说成构建被拒 |
+| `a profile with unapproved scripts marks that package and only that one` | overview 只标本包，`blocked`/`upgradable` 不受影响 |
+| `a package with unapproved scripts is still offered as an upgrade` | `upgradable === true` 与 `pendingBuilds` 同时成立 |
 
-哨兵验证做过的四处（见提交信息）：`needsAttention` 恒 false → 4 条红；报告里的
+哨兵验证做过的六处（见提交信息）：`needsAttention` 恒 false → 4 条红；报告里的
 `recommended` 条件放宽 → 1 条红；`pathNoPublished` 指向另一个键 → 1 条红；
-`versionNoteOf` 给未知原文加后缀 → 2 条红。
+`versionNoteOf` 给未知原文加后缀 → 2 条红；`buildBlockedOutcome` 的 diagnostic 回退改成恒
+`undefined` → 1 条红；overview 的 `entry.pendingBuilds = blockedBuilds` 改成跳过 → 2 条红。
 
-## 十一、符号位置（2026-11-06 核对）
+## 十一、符号位置（2026-11-09 核对）
 
 这一页和 §24 一样是手写的（没有「原文快照」整节），所以 AGENTS.md 里出现过的符号必须在这里
 逐个点名，否则判据搬走了就没处查。
@@ -237,15 +313,20 @@ export function needsAttention(row: OverviewRow): boolean {
 |---|---|---|
 | `installedIncompatible`（行字段） | `src/client/types.ts:81`（`OverviewRow` @ `:37`） | ✅ |
 | `recommended`（行字段） | `src/client/types.ts:90` | ✅ |
-| `targetOf` | `src/client/components/Tab.ts:327` | ✅ |
+| `pendingBuilds`（行字段） | `src/client/types.ts:62`；`StepResult` 也有一个 `:133` | ✅ |
+| `targetOf` | `src/client/components/Tab.ts:380` | ✅ |
 | `const target` @ `PluginRow` | `src/client/components/PluginRow.ts:77` | ✅ |
-| `onlyNeedsAttention` | `src/client/components/Tab.ts:85`（过滤 `:283`、按钮 `:459`） | ✅ |
+| `onlyNeedsAttention` | `src/client/components/Tab.ts:85`（过滤 `:336`、按钮 `:512`） | ✅ |
+| `batchable` / `skippedBuilds` / `upgradableRows` | `Tab.ts:307` / `:329` / `:320` | ✅ |
+| `readPendingBuilds` / `pendingFor` | `src/host/builds.ts`（`PENDING_BUILD` 也在那里） | ✅ |
 | `needsAttention` | `src/client/diagnostics.ts:25` | ✅ |
 | `diagnosticsReport` | `src/client/diagnostics.ts:57` | ✅ |
 | `versionNoteOf` | `src/client/format.ts:129` | ✅ |
 | `recommendedHint` | `src/client/copy.ts:62`（英文 `:223`），用在 `PluginRow.ts:178`、`:219` | ✅ |
 | `upgradeTo` | `src/client/copy.ts:63`（英文 `:224`），用在 `PluginRow.ts:222` | ✅ |
-| `runtimeVersionUnknown` | `src/client/copy.ts:70`（英文 `:231`），用在 `Tab.ts:697`、`diagnostics.ts:58` | ✅ |
+| `runtimeVersionUnknown` | `src/client/copy.ts:70`（英文 `:231`），用在 `Tab.ts:761`、`diagnostics.ts:58` | ✅ |
+| `buildBlockedFailed` / `batchSkippedBuilds` | `src/client/copy.ts:128` / `:130`（英文 `:295` / `:297`） | ✅ |
+| `buildBlocked` / `approve` | `src/client/copy.ts:126` / `:127`（英文 `:293` / `:294`） | ✅ |
 
 `src/client/types.ts` 与 `src/client/format.ts` 这两个路径值得单独记一笔：**`src/host/types.ts`
 并不存在**，所有跨 host / client 的类型都在 `src/client/types.ts` 里（早期写错过两次）。

@@ -134,13 +134,14 @@ re-select，包没了必须 `installBundle(名字@旧版本)`。**旧版本必�
 `--fail-below` 写进 CI：会随口径波动变红的检查，只会训练所有人忽略红色。 [详证](RELEASING.md)
 
 ## 26. 不兼容不能是一条死路
-宿主闸门**在 bundle 卸下之后**才拒绝（§20），所以「装不了」必须当场说清并**给出能装的那个版本**。「新的会被拒」是 `blocked`，「在跑的从来不被允许」是
-`installedIncompatible`：插件可能根本没被加载，必须单独一行说。**`latest` 装不了 ≠ 没得装**：有更高的兼容版本就给 `recommended` 并
-**重开 `upgradable`**。按钮和批量只认 `recommended ?? latest`，客户端走 `targetOf(row)`；再拿 `row.latest` 当目标就退回成「行是死的」。
+宿主闸门**在 bundle 卸下之后**才拒绝（§20），「装不了」要当场说清并**给出能装的版本**。「新的会被拒」是 `blocked`，「在跑的不被允许」是
+`installedIncompatible`：可能根本没被加载，要单独说。**`latest` 装不了 ≠ 没得装**：有兼容的更新版本就给 `recommended` 并
+**重开 `upgradable`**。按钮和批量只认 `recommended ?? latest`，客户端走 `targetOf(row)`；再拿 `row.latest` 就退回成死行。
 `recommended` **永不高于** `latest`。**读不到 DSH 版本就不判**：`runtimeVersion` 为 null 时既不设 `installedIncompatible` 也
 不标兼容——「不知道」≠「不兼容」。**`versionError` 是宿主对外数据，不是文案**：本地化只在客户端（`versionNoteOf`），未识别原文**逐字透传**，`retriable` 正则
-依赖原文。**「需处理」只算本 profile 出问题的四件事**：`installedIncompatible`、镜像落后、读不到版本、待批准构建，**不算 `blocked`** 与可升级。
-**诊断走纯客户端**，不加路由、不加 §15 能力信号。 [详证](docs/rules/26-compatibility-dead-end.md)
+依赖原文。**「需处理」只算四件事**：`installedIncompatible`、镜像落后、读不到版本、待批准构建，**不算 `blocked`** 与可升级。
+**待批准构建**：宿主自读 `allowBuilds`→ 行给 `pendingBuilds`+批准按钮；**批量跳过并说明**，仍算 `upgradable`。
+**诊断走纯客户端**，不加路由与 §15 信号。 [详证](docs/rules/26-compatibility-dead-end.md)
 
 ## 改完必须做的事
 `pnpm run check`：typecheck(src+test) + build + `node --test` + pack 检查 + 构建产物已提交 + 本文件长度。发布走 tag（npm
