@@ -66,9 +66,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "test": "node --test",
     "downloads": "node scripts/downloads.mjs",
+    "check:agents": "node scripts/verify-agents-md.mjs",
     "check:pack": "node scripts/verify-pack.mjs",
     "check:build": "node scripts/verify-build-committed.mjs",
-    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && node scripts/build.mjs && node --test && node scripts/verify-pack.mjs && node scripts/verify-build-committed.mjs"
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json && node scripts/verify-agents-md.mjs && node scripts/build.mjs && node --test && node scripts/verify-pack.mjs && node scripts/verify-build-committed.mjs"
   },
   "dsh": {
     "bundle": {

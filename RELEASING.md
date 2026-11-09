@@ -243,6 +243,17 @@ node scripts/downloads.mjs --json       # 给别的脚本吃
 还有一条：**发版频率本身就是噪声源。** 一周发五六个版本，等于一周制造五六个发版日，把曲线
 搅成锯齿，任何趋势都看不出来。功能没变时不必发版。
 
+上面那四件事各自对应 `scripts/downloads.mjs` 里的一个导出函数，改脚本时按名字对号入座：
+
+| AGENTS.md 里写的 | 实际位置 | 干什么 |
+|---|---|---|
+| `lagDaysOf` | `scripts/downloads.mjs:104` | 把尾部连续的 0 判成上报滞后 |
+| `splitDays` | `scripts/downloads.mjs:124` | 分成发版日与安静日 |
+| `summarise` | `scripts/downloads.mjs:158` | 算安静日中位数、发版倍数 |
+| `rolloff` | `scripts/downloads.mjs:212` | 未来几天谁离开 30 天窗口 |
+
+配套的：`dayOf` @ `:64`、`releaseDaysOf` @ `:80`、`medianOf` @ `:144`。
+
 ---
 
 ## 常见问题

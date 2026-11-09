@@ -227,3 +227,27 @@ export function needsAttention(row: OverviewRow): boolean {
 哨兵验证做过的四处（见提交信息）：`needsAttention` 恒 false → 4 条红；报告里的
 `recommended` 条件放宽 → 1 条红；`pathNoPublished` 指向另一个键 → 1 条红；
 `versionNoteOf` 给未知原文加后缀 → 2 条红。
+
+## 十一、符号位置（2026-11-06 核对）
+
+这一页和 §24 一样是手写的（没有「原文快照」整节），所以 AGENTS.md 里出现过的符号必须在这里
+逐个点名，否则判据搬走了就没处查。
+
+| AGENTS.md 里写的 | 实际位置 | 结论 |
+|---|---|---|
+| `installedIncompatible`（行字段） | `src/client/types.ts:81`（`OverviewRow` @ `:37`） | ✅ |
+| `recommended`（行字段） | `src/client/types.ts:90` | ✅ |
+| `targetOf` | `src/client/components/Tab.ts:327` | ✅ |
+| `const target` @ `PluginRow` | `src/client/components/PluginRow.ts:77` | ✅ |
+| `onlyNeedsAttention` | `src/client/components/Tab.ts:85`（过滤 `:283`、按钮 `:459`） | ✅ |
+| `needsAttention` | `src/client/diagnostics.ts:25` | ✅ |
+| `diagnosticsReport` | `src/client/diagnostics.ts:57` | ✅ |
+| `versionNoteOf` | `src/client/format.ts:129` | ✅ |
+| `recommendedHint` | `src/client/copy.ts:62`（英文 `:223`），用在 `PluginRow.ts:178`、`:219` | ✅ |
+| `upgradeTo` | `src/client/copy.ts:63`（英文 `:224`），用在 `PluginRow.ts:222` | ✅ |
+| `runtimeVersionUnknown` | `src/client/copy.ts:70`（英文 `:231`），用在 `Tab.ts:697`、`diagnostics.ts:58` | ✅ |
+
+`src/client/types.ts` 与 `src/client/format.ts` 这两个路径值得单独记一笔：**`src/host/types.ts`
+并不存在**，所有跨 host / client 的类型都在 `src/client/types.ts` 里（早期写错过两次）。
+`versionError` 的行字段在 `src/client/types.ts:59`，四处写入点全在 `src/host/overview.ts:229`、
+`:232`、`:236`、`:250` —— `retriable` 正则吃的就是这里写下去的原文。

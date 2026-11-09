@@ -148,3 +148,29 @@ setBundleEnabled(name, false) → setBundleEnabled(name, true)
 把 `landedOnDisk` 的第一行换成 `return false`（等价于修复前的行为），新用例必须变红。
 实测：`tests 43 / pass 42 / fail 1`，红的正是
 `a rollback that installs but cannot activate is not called "not installed"`。改回来 43/43。
+
+## 符号位置（2026-11-06 核对）
+
+这一页是后来手写的（不像 §01–§23 那样含「原文快照」整节），所以早期 AGENTS.md 里出现过的
+符号这里必须逐个点名，否则判据搬过来之后就没地方查了。
+
+| AGENTS.md 里写的 | 实际位置 | 结论 |
+|---|---|---|
+| `landedOnDisk` | `src/host/install.ts:496` | ✅ |
+| `repairOutcome` | `src/host/install.ts:889`（调用点 `:831`、`:851`） | ✅ |
+| `rollBack` | `src/host/install.ts:434` | ✅ |
+| `recover` | `src/host/install.ts:529`（调用点 `:821`、`:841`） | ✅ |
+| `Rollback` | `src/host/install.ts:75` | ✅ |
+| `StepOutcome` | `src/host/install.ts:29` | ✅ |
+| `StepOutcome.inactive` | `src/host/install.ts:54` | ✅ |
+| `StepOutcome.rollbackReason` | `src/host/install.ts:56` | ✅ |
+| `StepResult` | `src/client/types.ts:112` | ✅ |
+| `StepResult.inactive` | `src/client/types.ts:122` | ✅ |
+| `StepResult.rollbackReason` | `src/client/types.ts:124` | ✅ |
+| `results: StepResult[]` | `src/client/types.ts:155` | ✅ |
+| `inactiveAfterRollback` | `src/client/copy.ts:120`（英文 `:284`） | ✅ |
+| 横幅分支 | `src/client/components/Tab.ts`（§26 那一节列的同一份） | ✅ |
+
+「入库 ≠ 激活」那句话的两个类型名（`StepOutcome` / `StepResult`）都在上面：前者是 host 侧的
+产出、后者是走 HTTP 到客户端的那份，两边各自带 `inactive` 与 `rollbackReason`——少一边，
+面板就只能看到「失败」而看不出「失败在激活」。
