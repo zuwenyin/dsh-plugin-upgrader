@@ -11,6 +11,8 @@ import { compareVersions } from './version.ts'
 import { repoUrlOf, type PackumentLike } from './repo.ts'
 import { inlineIcon, pickText, registryBase, sourceKind, type SourceKind } from './bundle.ts'
 import { runtimeVersionOf } from './runtime.ts'
+import { pendingFor, readPendingBuilds } from './builds.ts'
+import { profileDirFrom } from './manifest.ts'
 import {
   cachedTags,
   fetchPackument,
@@ -93,6 +95,17 @@ export interface OverviewRow {
    * like an up-to-date package.
    */
   mirrorMissing?: string[]
+  /**
+   * This package's build scripts the profile has not approved yet.
+   *
+   * pnpm refuses to run a dependency's install scripts unless the profile says
+   * yes, and the manager records the refusal in `pnpm-workspace.yaml` instead of
+   * deciding for the user. Without surfacing it here the refusal is invisible:
+   * the upgrade fails, the placeholder stays, and every retry fails the same
+   * way with nothing on the page that says why. Approving runs someone else's
+   * code, so these are named, never auto-approved.
+   */
+  pendingBuilds?: string[]
   /**
    * The DSH requirement of {@link latest}, when that release cannot run here.
    *
@@ -200,6 +213,11 @@ export async function buildOverview(
     : runtimeVersionOf(process.argv)
 
   const installed = bundles.filter((bundle) => bundle.installed === true)
+  /*
+   * Read once for the whole page: the file is one small read, and a per-row
+   * call would re-read the same bytes a dozen times while the page is loading.
+   */
+  const pending = readPendingBuilds(profileDirFrom())
   const rows = await mapLimited(installed, PACKUMENT_CONCURRENCY, async (bundle): Promise<OverviewRow> => {
     const kind = sourceKind(bundle.source)
     /** Official rows live inside the installation and cannot be replaced. */
@@ -228,6 +246,13 @@ export async function buildOverview(
       totalVersions: 0,
       versionError: undefined,
     }
+    /*
+     * Set before the early returns: a package whose scripts are blocked is
+     * exactly the one whose row otherwise looks fine, and dropping the field on
+     * the failure paths would hide the only thing the user can act on.
+     */
+    const blockedBuilds = pendingFor(pending, bundle.name)
+    if (blockedBuilds.length > 0) entry.pendingBuilds = blockedBuilds
     if (bundle.version === undefined) {
       entry.versionError = managed ? 'version unknown' : 'not a profile-managed package'
       return entry

@@ -125,6 +125,9 @@ export const ZH: Copy = {
   hideLog: '收起日志',
   buildBlocked: '这个包有未批准的构建脚本',
   approve: '批准并重启',
+  buildBlockedFailed: (name: string) =>
+    `${name}：升级没走完，因为它的构建脚本还没被批准。到这一行点「批准并重启」——批准等于同意在安装时运行它带来的代码，所以这一步交给你决定。`,
+  batchSkippedBuilds: (count: number) => `有 ${count} 个包要先批准构建脚本，没有放进这次批量升级。`,
   registry: '注册表',
   registryChange: '更换安装源',
   registryFollowPnpm: '跟随 pnpm 配置',
@@ -289,6 +292,9 @@ export const EN: Copy = {
   hideLog: 'Hide log',
   buildBlocked: 'This package has unapproved build scripts',
   approve: 'Approve and retry',
+  buildBlockedFailed: (name: string) =>
+    `${name}: the upgrade did not finish because its build scripts are not approved yet. Use "Approve and retry" on that row — approving means running code that package brought with it at install time, so that decision stays with you.`,
+  batchSkippedBuilds: (count: number) => `${count} package(s) need their build scripts approved first, so they were left out of this batch.`,
   registry: 'Registry',
   registryChange: 'Change install source',
   registryFollowPnpm: "Follow pnpm's config",

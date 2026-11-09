@@ -891,4 +891,99 @@ test('a rollback that installs but cannot activate is not called "not installed"
   })
 })
 
+/*
+ * A refused build script is a question, not a dead end.
+ *
+ * pnpm stops the install and the manager writes `name@version: set this to true
+ * or false` into the profile's pnpm settings, so the next run can be told yes.
+ * The step has to carry that name back: without it the page can only show the
+ * pnpm log, and every retry asks the same unanswerable question again.
+ */
+async function buildBlockedProfile(
+  body: (dir: string) => Promise<void>,
+  workspace = 'allowBuilds:\n  pkg@2.0.0: set this to true or false\n',
+): Promise<void> {
+  await withProfile({ name: 'desktop', dependencies: { pkg: '1.0.0' } }, async (dir) => {
+    writeFileSync(join(dir, 'pnpm-workspace.yaml'), workspace, 'utf8')
+    await body(dir)
+  })
+}
+
+test('a build-script refusal names what has to be approved', async () => {
+  await buildBlockedProfile(async () => {
+    const { manager } = fakeManager({
+      installs: () =>
+        ({
+          changed: false,
+          application: 'failed',
+          stage: 'install',
+          target: 'pkg',
+          error: { code: 'operation-error', diagnostic: 'ERR_PNPM_IGNORED_BUILDS Ignored build scripts: pkg@2.0.0' },
+          pendingBuilds: ['pkg@2.0.0', 'other@1.0.0'],
+        }) as ChangeResult,
+    })
+    const log: string[] = []
+    const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, (line) => log.push(line))
+
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.message, 'build-blocked', 'the page needs a nameable reason, not operation-error')
+    // Only this package's entry: the manager answers with the whole profile.
+    assert.deepEqual(outcome.pendingBuilds, ['pkg@2.0.0'])
+    assert.match(log.join('\n'), /pnpm skipped the build scripts of pkg@2\.0\.0; they need an explicit approval/)
+  })
+})
+
+test('the diagnostic alone is enough when the manager could not read the file', async () => {
+  await buildBlockedProfile(async () => {
+    const { manager } = fakeManager({
+      installs: () =>
+        ({
+          changed: false,
+          application: 'failed',
+          stage: 'install',
+          target: 'pkg',
+          error: { code: 'operation-error', diagnostic: 'ERR_PNPM_IGNORED_BUILDS Ignored build scripts: pkg@2.0.0' },
+        }) as ChangeResult,
+    })
+    const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+    assert.equal(outcome.message, 'build-blocked')
+    assert.deepEqual(outcome.pendingBuilds, ['pkg@2.0.0'])
+  })
+})
+
+test('an answered script is not offered for approval again', async () => {
+  await buildBlockedProfile(
+    async () => {
+      const { manager } = fakeManager({
+        installs: () =>
+          ({
+            changed: false,
+            application: 'failed',
+            stage: 'install',
+            target: 'pkg',
+            error: { code: 'operation-error', diagnostic: 'Ignored build scripts: pkg@2.0.0' },
+          }) as ChangeResult,
+      })
+      const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+      // Nothing is pending any more, so there is nothing to approve and the
+      // failure has to keep its original code.
+      assert.equal(outcome.pendingBuilds, undefined)
+      assert.equal(outcome.message, 'operation-error')
+    },
+    'allowBuilds:\n  pkg@2.0.0: true\n',
+  )
+})
+
+test('an ordinary failure is not relabelled as a build refusal', async () => {
+  await buildBlockedProfile(async () => {
+    const { manager } = fakeManager({ installs: () => refused('network', 'install') })
+    const outcome = await runStep(manager, { name: 'pkg', version: '2.0.0' }, () => {})
+
+    assert.equal(outcome.message, 'network')
+    assert.equal(outcome.pendingBuilds, undefined)
+  })
+})
+
 

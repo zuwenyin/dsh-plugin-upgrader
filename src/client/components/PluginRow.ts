@@ -279,10 +279,22 @@ export function PluginRow(props: PluginRowProps): unknown {
           h(
             'div',
             { className: 'dsh-pu-banner is-warn' },
-            h('span', null, t('buildBlocked')),
+            /*
+             * Named, not counted. `dsh-xdpool@2.6.4` is the difference between
+             * "something here wants a decision" and knowing which decision —
+             * and the key is exactly what the manager wrote and what the retry
+             * has to approve, so it is also the thing to paste into an issue.
+             */
+            h('span', { className: 'dsh-pu-mono' }, pendingBuilds.join(', ')),
+            h('span', { className: 'dsh-pu-grow' }, t('buildBlocked')),
             h(
               'button',
-              { type: 'button', className: 'dsh-pu-btn is-tiny', onClick: () => onApprove(row) },
+              {
+                type: 'button',
+                className: 'dsh-pu-btn is-primary is-tiny',
+                disabled: busy,
+                onClick: () => onApprove(row),
+              },
               t('approve'),
             ),
           ),

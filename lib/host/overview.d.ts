@@ -34,6 +34,17 @@ export interface OverviewRow {
      */
     mirrorMissing?: string[];
     /**
+     * This package's build scripts the profile has not approved yet.
+     *
+     * pnpm refuses to run a dependency's install scripts unless the profile says
+     * yes, and the manager records the refusal in `pnpm-workspace.yaml` instead of
+     * deciding for the user. Without surfacing it here the refusal is invisible:
+     * the upgrade fails, the placeholder stays, and every retry fails the same
+     * way with nothing on the page that says why. Approving runs someone else's
+     * code, so these are named, never auto-approved.
+     */
+    pendingBuilds?: string[];
+    /**
      * The DSH requirement of {@link latest}, when that release cannot run here.
      *
      * The upgrade button targets `latest`, so a newer release the host would

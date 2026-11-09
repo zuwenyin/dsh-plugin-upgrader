@@ -159,6 +159,26 @@ export function Tab(props: TabProps): unknown {
             )
             .join(' · '),
         })
+      } else if (failures.some((failure) => (failure.pendingBuilds ?? []).length > 0)) {
+        /**
+         * A package whose build scripts the host has not approved fails with
+         * the manager's generic `operation-error` and a whole pnpm log as its
+         * detail — every timeout the registry had, the ignored-builds line
+         * buried in the middle. Printing that is what the user got before this
+         * branch existed, and it said nothing they could act on.
+         *
+         * The decision is theirs to make (approving runs someone else's code at
+         * install time), so this names it and points at the row, which is where
+         * the approve button is. Saying "approve it" without saying where would
+         * be the same dead end in fewer words.
+         */
+        setBanner({
+          tone: 'warn',
+          text: failures
+            .filter((failure) => (failure.pendingBuilds ?? []).length > 0)
+            .map((failure) => t('buildBlockedFailed', failure.name))
+            .join(' · '),
+        })
       } else if (failures.length > 0) {
         /**
          * `message` is the manager's code (`bundle-in-use`, `not-removable`),
@@ -274,9 +294,42 @@ export function Tab(props: TabProps): unknown {
    * with `removeBundle`, which unloads the code running the batch, so including
    * it would strand the profile mid-upgrade. Its own row carries a separate
    * action that goes through the page's installer instead.
+   *
+   * A row whose build scripts are not approved is excluded too, and for a
+   * plainer reason: that step cannot succeed until the question is answered.
+   * Leaving it in the batch made every 「一键升级」 fail with the same package and
+   * the same wall of pnpm output, and the batch retried it forever because
+   * nothing recorded that it had already been refused. The row keeps its own
+   * upgrade button and its approve button, so the decision stays with the user;
+   * approving build scripts is running someone else's code, which a batch count
+   * is not allowed to decide.
    */
-  const batchable = (row: OverviewRow): boolean => row.upgradable === true && row.name !== SELF_NAME
+  const batchable = (row: OverviewRow): boolean =>
+    row.upgradable === true &&
+    row.name !== SELF_NAME &&
+    (Array.isArray(row.pendingBuilds) ? row.pendingBuilds : []).length === 0
   const upgradable = rows.filter(batchable)
+  /**
+   * Rows with a newer version, whether or not a batch may take them.
+   *
+   * The 可升级 stat counts these, not the batchable ones. It answers "is there a
+   * newer version?", which stays true for a row whose build scripts are pending;
+   * the batch button answers a narrower question and shows its own, smaller
+   * number right next to the banner that explains the difference.
+   */
+  const upgradableRows = rows.filter((row) => row.upgradable === true)
+  /**
+   * Upgradable rows a batch had to leave out because of build scripts.
+   *
+   * Counted separately so the page can say so out loud. Without it a profile
+   * whose only pending upgrade is a build-blocked one would show "全部已是最新"
+   * with a greyed-out batch button — both true statements about a batch, and
+   * together a lie about the page.
+   */
+  const skippedBuilds = rows.filter(
+    (row) =>
+      row.name !== SELF_NAME && row.upgradable === true && (Array.isArray(row.pendingBuilds) ? row.pendingBuilds : []).length > 0,
+  )
   const attention = rows.filter(needsAttention)
   const needle = query.trim().toLowerCase()
   const filtered = rows
@@ -440,10 +493,10 @@ export function Tab(props: TabProps): unknown {
           h('span', { className: 'dsh-pu-stat' }, t('installed'), ' ', h('b', null, String(rows.length))),
           h(
             'span',
-            { className: `dsh-pu-stat${upgradable.length > 0 ? ' is-warn' : ''}` },
+            { className: `dsh-pu-stat${upgradableRows.length > 0 ? ' is-warn' : ''}` },
             t('upgradable'),
             ' ',
-            h('b', null, String(upgradable.length)),
+            h('b', null, String(upgradableRows.length)),
           ),
           /*
            * The one number that answers "is anything wrong?". It is a button, not
@@ -672,7 +725,18 @@ export function Tab(props: TabProps): unknown {
           ),
         ),
 
-    rows.length > 0 && upgradable.length === 0
+    /*
+     * Said out loud, next to the batch button it applies to. A batch that
+     * silently skipped a row would leave the user clicking 「一键升级」, watching
+     * it report success, and finding the same upgrade still offered afterwards.
+     * The count is in the sentence rather than a tooltip because the button next
+     * to it shows a number that no longer matches the 可升级 stat above.
+     */
+    skippedBuilds.length > 0
+      ? h('div', { className: 'dsh-pu-banner is-warn' }, h('span', null, t('batchSkippedBuilds', skippedBuilds.length)))
+      : null,
+
+    rows.length > 0 && upgradable.length === 0 && skippedBuilds.length === 0
       ? h('div', { className: 'dsh-pu-banner' }, h('span', null, t('upToDate')))
       : null,
 

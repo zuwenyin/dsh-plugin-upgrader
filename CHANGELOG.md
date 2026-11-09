@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.8.1 — 2026-11-09
+
+- **An upgrade blocked on build scripts failed forever, and the page could not say why.** pnpm
+  refuses to run a package's install scripts until they are approved, so `dsh-xdpool@2.6.4`
+  installed, was rolled back, and failed again on every retry. The manager does record the
+  package in `allowBuilds` as `set this to true or false`, and the tab has had a
+  「批准并重启」 button for that state — but nothing ever filled the row's `pendingBuilds`, so
+  the button never appeared. A batch that met one of these reported 「批量升级完成」 with
+  a red card whose only content was the manager's `operation-error` and a wall of registry
+  timeouts.
+  The host now reads the profile's `pnpm-workspace.yaml` itself (`src/host/builds.ts`,
+  no new dependency), names the exact `name@version` keys still unanswered, and reports
+  `build-blocked` as the reason instead of `operation-error`. The row shows the keys and the
+  approve button; the batch leaves those rows out and says so, because approving means running
+  code the package ships at install time — a decision a batch count must not make.
+- **A batch is not counted as "everything is up to date" when it skipped someone.** The
+  可升级 stat counts every row with a newer version, while the batch button counts only the rows
+  it can actually finish, and a banner explains the difference. Previously a profile whose only
+  pending upgrade was build-blocked showed 「全部已是最新」 next to a greyed-out button.
+- The failed-step banner for this case is its own sentence pointing at the row, rather than the
+  full pnpm log with no action in it.
+
 ## 1.8.0 — 2026-11-05
 
 - **A row whose newest release the host refuses is no longer a dead row.** The tab marked

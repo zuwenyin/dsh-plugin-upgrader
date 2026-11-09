@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { buildOverview } from '../src/host/overview.ts'
 import { PACKUMENT_CONCURRENCY, type PackumentEntry, type TagEntry } from '../src/host/registry.ts'
@@ -364,5 +367,81 @@ test('the runtime version reaches the page, and an unreadable one blocks nothing
     assert.equal(unknown.bundles[0]?.versions.find((row) => row.version === '1.1.0')?.compatible, undefined)
   } finally {
     restore()
+  }
+})
+
+/*
+ * Unapproved build scripts have to reach the page, or the approve button it
+ * already draws can never appear.
+ *
+ * The manager writes `name@version: set this to true or false` into the
+ * profile's pnpm settings when pnpm skips an install script. That file is the
+ * only place the row can learn about it: `listBundles()` says nothing, and the
+ * upgrade simply fails again until someone answers.
+ */
+test('a profile with unapproved scripts marks that package and only that one', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-overview-'))
+  const previous = process.env.DSH_PROFILE_DIR
+  writeFileSync(
+    join(dir, 'pnpm-workspace.yaml'),
+    [
+      'allowBuilds:',
+      '  pkg: true',
+      '  other@2.0.0: set this to true or false',
+      '  unrelated@1.0.0: set this to true or false',
+      'minimumReleaseAgeExclude:',
+      '  - other@2.0.0 || 2.0.1',
+      '',
+    ].join('\n'),
+    'utf8',
+  )
+  process.env.DSH_PROFILE_DIR = dir
+  const stub = stubFetch(() => {})
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg'), bundle('other'), bundle('unrelated')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      {},
+    )
+    const byName = new Map(overview.bundles.map((row) => [row.name, row]))
+    // Answered: nothing to do.
+    assert.equal(byName.get('pkg')?.pendingBuilds, undefined)
+    assert.deepEqual(byName.get('other')?.pendingBuilds, ['other@2.0.0'])
+    assert.deepEqual(byName.get('unrelated')?.pendingBuilds, ['unrelated@1.0.0'])
+  } finally {
+    process.env.DSH_PROFILE_DIR = previous
+    stub.restore()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a package with unapproved scripts is still offered as an upgrade', async () => {
+  /*
+   * The row must keep saying "there is a newer version": the question is how to
+   * install it, not whether it exists. Dropping `upgradable` here would make the
+   * row look up to date while the batch silently skips it — the page would be
+   * wrong in two places at once.
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-overview-'))
+  const previous = process.env.DSH_PROFILE_DIR
+  writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'allowBuilds:\n  pkg@1.1.0: set this to true or false\n', 'utf8')
+  process.env.DSH_PROFILE_DIR = dir
+  const stub = stubFetch(() => {})
+  try {
+    const overview = await buildOverview(
+      context([bundle('pkg')]),
+      new Map<string, PackumentEntry>(),
+      new Map<string, TagEntry>(),
+      {},
+    )
+    const row = overview.bundles[0]
+    assert.ok(row !== undefined)
+    assert.equal(row.upgradable, true)
+    assert.deepEqual(row.pendingBuilds, ['pkg@1.1.0'])
+  } finally {
+    process.env.DSH_PROFILE_DIR = previous
+    stub.restore()
+    rmSync(dir, { recursive: true, force: true })
   }
 })

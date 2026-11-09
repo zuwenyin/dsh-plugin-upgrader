@@ -122,6 +122,15 @@ export interface StepResult {
   inactive?: string
   /** Why a repair did not fully work. */
   rollbackReason?: string
+  /**
+   * The build scripts this step could not get past.
+   *
+   * pnpm refuses to run a dependency's install scripts unless the profile
+   * approves them, and the manager records the refusal instead of choosing for
+   * the user. Without this the failure is a wall of pnpm output and the next
+   * attempt fails identically; with it the panel can name the decision.
+   */
+  pendingBuilds?: string[]
 }
 
 /** A batch job, as polled and as adopted from the overview. */
