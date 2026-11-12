@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.8.1 — 2026-11-09
+## 1.8.1 — 2026-11-12
 
 - **An upgrade blocked on build scripts failed forever, and the page could not say why.** pnpm
   refuses to run a package's install scripts until they are approved, so `dsh-xdpool@2.6.4`
@@ -21,6 +21,13 @@
   pending upgrade was build-blocked showed 「全部已是最新」 next to a greyed-out button.
 - The failed-step banner for this case is its own sentence pointing at the row, rather than the
   full pnpm log with no action in it.
+- **The `description` now carries the word the search index was missing.** npm's relevance score
+  is pure text matching — `popularity`, `quality` and `maintenance` are `1.0` for every candidate
+  in this league — and the one form of our own name the description never contained was the
+  hyphenated `dsh-plugin`. It is now there, together with what the plugin actually does to a
+  plugin (replaces it in place, nothing uninstalled, enabled state kept). 117 → 209 characters,
+  still under the 255-character cap where the search index truncates: a tail past that point is
+  indexed by nobody. No code, no test, no behaviour change; the string is read by npm alone.
 
 ## 1.8.0 — 2026-11-05
 
