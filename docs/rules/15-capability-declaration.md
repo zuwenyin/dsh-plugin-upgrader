@@ -72,7 +72,7 @@
 |---|---|---|
 | `files` | `node:fs` 的导入 | 命中，见 `src/host/lock.ts`、`src/host/manifest.ts`、`src/host/runtime.ts` 的 `node:fs` 导入 | 
 | `network` | `node:http`/`node:https` 导入（**纯类型导入也算**）、`fetch(`、`WebSocket(` | 命中。`node:http` 三处全是**纯类型**：`src/host/http.ts` 的 `import type`、`src/index.ts` 的 `import type`、`src/host/manager.ts` 的 `import('node:http').IncomingMessage` 内联类型；`fetch(` 在 `src/host/registry.ts` 与 `src/client/api.ts`；`WebSocket(` **零命中** | 
-| `credentials` | 不在白名单里的 `process.env` 形式 | 全仓库只有一处 `process.env`：`src/host/manifest.ts` 的 `profileDirFrom(env: NodeJS.ProcessEnv = process.env, …)` —— 点号直取，在白名单讨论之外（它读的是整个 env 对象，不是某个具体键） | 
+| `credentials` | 不在白名单里的 `process.env` 形式 | **零命中**（2026-11-13 起）。1.8.1 及以前有一处：`src/host/manifest.ts` 的 `profileDirFrom(env: NodeJS.ProcessEnv = process.env, …)`——它读的是整个 env 对象，而正则要求 `process.env` **紧跟**白名单点号访问，所以默认参数本身就命中。1.8.2 改成由宿主注入的 `profileContext.dir` 决定目录（`setProfileDir()`），源码里再没有裸 `process.env`，信号消失 | 
 | `commands` | `child_process` 或 `spawn(`/`exec(` | **零命中** —— 原文「本仓库**没有**这一项」✅ 成立。`src/` 里所有 `.exec(` 都是 `RegExp.exec`（`lock.ts`、`registry.ts`、`repo.ts`、`version.ts`），不是 `child_process` 的 | 
 
 `node:http` 那三处正是原文「**纯类型导入也算**」警告的对象：它们运行时一行代码都不执行，
@@ -134,6 +134,25 @@
   哪里」，不是「有没有 `fetch(`」。
 - **新增一次文件写入** → `files` 信号已经命中，但 README 里「文件」那一行写的是写入
   **范围**（profile 目录）。写到 profile 之外，那一行就变成假话了。
+
+## 补记：1.8.2 是怎么消掉 credentials 的（可复用的一次）
+
+商店报的三条信号里，`files` / `network` 是功能本体，消不掉；`credentials` 是唯一能如实
+消掉的一条。**做法不是藏，是换一个正确的数据来源**：
+
+- 旧实现：`profileDirFrom(env: NodeJS.ProcessEnv = process.env, …)`，再用
+  `env.DSH_PROFILE_DIR` / `env.DSH_HOME` / `env.DSH_PROFILE` 拼目录。扫描器的正则是
+  「`process.env` 后面必须紧跟白名单点号访问」，而这里后面紧跟的是 `,`，所以整个默认参数
+  命中——**哪怕它一个非白名单键都不读**。
+- 新实现：目录取自宿主注入的 `profileContext.dir`（`ctx.get('profileContext')`，
+  `@deepseek-ai/dsh-app-boot` 的 `ProfileContext` 接口里有 `readonly dir: string`），
+  加载时用 `setProfileDir()` 记下来；没有这个服务的宿主退回「cwd 像不像 profile」。
+- 关键判据：**这不是为了讨好扫描器而改功能**。宿主自己就是这么取 profile 的
+  （`PluginManager` 里 `this.profile = ctx.profileContext`），环境变量那条路本来就是
+  错的、只是以前能用。改完之后 README 的能力表反而更准确了：现在真的一个环境变量都不读。
+
+判断「能不能如实消掉」的问题不是「这个信号是不是误报」，而是「有没有一个**更正确**的
+数据来源」。有就换过去，没有就承认（`files` / `network` 就是承认的那两个）。
 
 换句话说，扫描器的判据（字符串与语法）和 README 的读者关心的事（能力边界）不是一回事，
 两边都要维护，这正是这一条同时要求「如实声明」和「写进 README」的原因。

@@ -70,30 +70,46 @@ interface JournalEnvelope {
 const JOURNAL_VERSION = 2
 
 /**
+ * The profile directory the launcher reported for this process.
+ *
+ * The harness mounts a `profileContext` service in every profile-launched
+ * process, and its `dir` is the directory the plugin manager itself writes to.
+ * Taking the value from there names the same profile the manager is working on
+ * instead of reconstructing it: the process environment is the launcher's own
+ * convenience copy, and a copy of a path is a second source of truth.
+ *
+ * Read once per load, because the launcher fixes the profile for the lifetime of
+ * the process. `apply()` records it before any route can answer.
+ */
+let launcherProfileDir: string | undefined
+
+/**
+ * Record the profile the launcher reported, or clear it.
+ *
+ * @param dir - the launcher's profile directory, when it reported one.
+ */
+export function setProfileDir(dir: string | undefined): void {
+  launcherProfileDir = dir !== undefined && dir.trim() !== '' ? dir.trim() : undefined
+}
+
+/**
  * Resolve the profile directory the running host is managing.
  *
- * The harness exports this to every process it starts, so the value names the
- * same profile the manager is working on rather than a guess from the disk.
+ * Two hosts exist and they name the profile differently. A `dsh`-launched
+ * profile supplies `profileContext`, which `setProfileDir` has already stored.
  *
- * The desktop host is an exception: it spawns the plugin host with
- * `cwd: this.projectDir` (the profile directory) and no `DSH_PROFILE*`
- * variables in the child environment, so the env-only lookups both miss. In
- * that case fall back to the working directory — but only when it really
- * looks like a profile (its `package.json` parses and carries a `dsh.profile`
- * object), so a random cwd can never be mistaken for one.
+ * The desktop host is the exception: it spawns the plugin host with
+ * `cwd: this.projectDir` (the profile directory) and no `profileContext` and no
+ * `DSH_PROFILE*` in the child environment. That case falls back to the working
+ * directory — but only when it really looks like a profile (its `package.json`
+ * parses and carries a `dsh.profile` object), so a random cwd can never be
+ * mistaken for one.
  *
- * @param env - the process environment.
  * @param cwd - the working directory to fall back to (overridable in tests).
  * @returns the absolute profile directory, or `undefined` when unknown.
  */
-export function profileDirFrom(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string | undefined {
-  const explicit = env.DSH_PROFILE_DIR
-  if (typeof explicit === 'string' && explicit.trim() !== '') return explicit.trim()
-  const home = env.DSH_HOME
-  const name = env.DSH_PROFILE
-  if (typeof home === 'string' && home.trim() !== '' && typeof name === 'string' && name.trim() !== '') {
-    return join(home.trim(), 'profiles', name.trim())
-  }
+export function profileDirFrom(cwd: string = process.cwd()): string | undefined {
+  if (launcherProfileDir !== undefined) return launcherProfileDir
   return profileDirFromCwd(cwd)
 }
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { runStep, validateStep } from '../src/host/install.ts'
-import { readJournal, recoverPendingDrops } from '../src/host/manifest.ts'
+import { readJournal, recoverPendingDrops, setProfileDir } from '../src/host/manifest.ts'
 import { LOCK_FILE } from '../src/host/lock.ts'
 import type {
   BundleInfo,
@@ -558,14 +558,18 @@ async function withProfile(
   body: (dir: string) => Promise<void>,
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-step-'))
-  const previous = process.env.DSH_PROFILE_DIR
   writeFileSync(join(dir, 'package.json'), `${JSON.stringify(manifest, undefined, 2)}\n`, 'utf8')
-  process.env.DSH_PROFILE_DIR = dir
+  /*
+   * The in-place route reads the profile directory this package recorded at
+   * load, so the fixture redirects that instead of an environment variable: a
+   * test that forgot would rewrite the manifest of the harness running the
+   * suite.
+   */
+  setProfileDir(dir)
   try {
     await body(dir)
   } finally {
-    if (previous === undefined) delete process.env.DSH_PROFILE_DIR
-    else process.env.DSH_PROFILE_DIR = previous
+    setProfileDir(undefined)
     rmSync(dir, { recursive: true, force: true })
   }
 }

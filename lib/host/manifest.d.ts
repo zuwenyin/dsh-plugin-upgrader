@@ -28,23 +28,28 @@ export interface DropJournal {
     at: number;
 }
 /**
+ * Record the profile the launcher reported, or clear it.
+ *
+ * @param dir - the launcher's profile directory, when it reported one.
+ */
+export declare function setProfileDir(dir: string | undefined): void;
+/**
  * Resolve the profile directory the running host is managing.
  *
- * The harness exports this to every process it starts, so the value names the
- * same profile the manager is working on rather than a guess from the disk.
+ * Two hosts exist and they name the profile differently. A `dsh`-launched
+ * profile supplies `profileContext`, which `setProfileDir` has already stored.
  *
- * The desktop host is an exception: it spawns the plugin host with
- * `cwd: this.projectDir` (the profile directory) and no `DSH_PROFILE*`
- * variables in the child environment, so the env-only lookups both miss. In
- * that case fall back to the working directory — but only when it really
- * looks like a profile (its `package.json` parses and carries a `dsh.profile`
- * object), so a random cwd can never be mistaken for one.
+ * The desktop host is the exception: it spawns the plugin host with
+ * `cwd: this.projectDir` (the profile directory) and no `profileContext` and no
+ * `DSH_PROFILE*` in the child environment. That case falls back to the working
+ * directory — but only when it really looks like a profile (its `package.json`
+ * parses and carries a `dsh.profile` object), so a random cwd can never be
+ * mistaken for one.
  *
- * @param env - the process environment.
  * @param cwd - the working directory to fall back to (overridable in tests).
  * @returns the absolute profile directory, or `undefined` when unknown.
  */
-export declare function profileDirFrom(env?: NodeJS.ProcessEnv, cwd?: string): string | undefined;
+export declare function profileDirFrom(cwd?: string): string | undefined;
 /** What happened when the entry was dropped. */
 export type DropResult = {
     kind: 'dropped';

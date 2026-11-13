@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { buildOverview } from '../src/host/overview.ts'
+import { setProfileDir } from '../src/host/manifest.ts'
 import { PACKUMENT_CONCURRENCY, type PackumentEntry, type TagEntry } from '../src/host/registry.ts'
 import type { BundleInfo, HostContext } from '../src/host/manager.ts'
 
@@ -381,7 +382,6 @@ test('the runtime version reaches the page, and an unreadable one blocks nothing
  */
 test('a profile with unapproved scripts marks that package and only that one', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-overview-'))
-  const previous = process.env.DSH_PROFILE_DIR
   writeFileSync(
     join(dir, 'pnpm-workspace.yaml'),
     [
@@ -395,7 +395,7 @@ test('a profile with unapproved scripts marks that package and only that one', a
     ].join('\n'),
     'utf8',
   )
-  process.env.DSH_PROFILE_DIR = dir
+  setProfileDir(dir)
   const stub = stubFetch(() => {})
   try {
     const overview = await buildOverview(
@@ -410,7 +410,7 @@ test('a profile with unapproved scripts marks that package and only that one', a
     assert.deepEqual(byName.get('other')?.pendingBuilds, ['other@2.0.0'])
     assert.deepEqual(byName.get('unrelated')?.pendingBuilds, ['unrelated@1.0.0'])
   } finally {
-    process.env.DSH_PROFILE_DIR = previous
+    setProfileDir(undefined)
     stub.restore()
     rmSync(dir, { recursive: true, force: true })
   }
@@ -424,9 +424,8 @@ test('a package with unapproved scripts is still offered as an upgrade', async (
    * wrong in two places at once.
    */
   const dir = mkdtempSync(join(tmpdir(), 'dsh-pu-overview-'))
-  const previous = process.env.DSH_PROFILE_DIR
   writeFileSync(join(dir, 'pnpm-workspace.yaml'), 'allowBuilds:\n  pkg@1.1.0: set this to true or false\n', 'utf8')
-  process.env.DSH_PROFILE_DIR = dir
+  setProfileDir(dir)
   const stub = stubFetch(() => {})
   try {
     const overview = await buildOverview(
@@ -440,7 +439,7 @@ test('a package with unapproved scripts is still offered as an upgrade', async (
     assert.equal(row.upgradable, true)
     assert.deepEqual(row.pendingBuilds, ['pkg@1.1.0'])
   } finally {
-    process.env.DSH_PROFILE_DIR = previous
+    setProfileDir(undefined)
     stub.restore()
     rmSync(dir, { recursive: true, force: true })
   }

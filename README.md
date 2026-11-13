@@ -147,9 +147,11 @@ pnpm 根本不会跑。所以换版本的顺序是：
 旧版本号会回传给界面，用于提示这是降级。
 
 > 实现在 1.2.0 就有了，但 1.2.0–1.4.0 在桌面端**从未真正生效**：
-> `profileDirFrom()` 只认 `DSH_PROFILE_DIR` / `DSH_HOME` + `DSH_PROFILE`，而桌面壳启动宿主时
-> 不导出这些变量（它直接把 profile 目录当作子进程的 cwd），于是第 2 步第一行就放弃了，
-> 每次升级都悄悄走 remove + install。1.4.1 加了 cwd 回退之后才真正走这条路。
+> 当时 `profileDirFrom()` 只认环境变量（`DSH_PROFILE_DIR` / `DSH_HOME` + `DSH_PROFILE`），
+> 而桌面壳启动宿主时不导出这些变量（它直接把 profile 目录当作子进程的 cwd），
+> 于是第 2 步第一行就放弃了，每次升级都悄悄走 remove + install。
+> 1.4.1 加了 cwd 回退之后才真正走这条路；1.8.2 起目录直接取自宿主注入的
+> `profileContext.dir`，环境变量那条路整个删掉了（见下面「权限、依赖与外部服务」）。
 > 细节见 [AGENTS.md](./AGENTS.md) 第 2 条「换版本时**不先卸载**」。
 
 ### 升级中断后 profile 还能自己长回来
@@ -248,9 +250,9 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 安装源的选择（`registry` / `customRegistries`）由**宿主的设置服务**写进 profile 的
 `cordis.patch.yml`，不是插件自己改文件——插件只调 `configForms` 的 `set()`。
 
-宿主进程的环境变量只用了 `DSH_PROFILE_DIR` / `DSH_HOME` / `DSH_PROFILE` 三个来**定位 profile
-目录**（桌面壳不导出它们时，退回「当前工作目录看起来像不像一个 profile」）。它们不是密钥，但
-静态扫描器会把裸 `process.env` 记成一次「凭据」信号，这里说明清楚它的真实用途。
+宿主注入的 `profileContext.dir` 就是 profile 目录，插件直接取它，**一个环境变量都不读**。
+桌面壳（或任何没有这个服务的宿主）里退回「当前工作目录看起来像不像一个 profile」——
+读 `cwd/package.json` 的 `dsh.profile` 字段，不猜路径。
 
 ### 外部服务
 
@@ -268,9 +270,10 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 ### 依赖
 
 运行时**没有自带依赖**。唯一的外部模块 `@deepseek-ai/schemastery`（Config schema 用，要求
-`~3.18.5`）声明在 `peerDependencies` 里，由宿主提供——DSH 桌面端把它作为自身依赖发布，
+`>=3.18.5 <4.0.0`）声明在 `peerDependencies` 里，由宿主提供——DSH 桌面端把它作为自身依赖发布，
 `dsh-plugin-manager` 等第一方包也依赖它，所以 profile 里一定解析得到。构建和测试需要的那一份
-放在 `devDependencies`。
+放在 `devDependencies`。范围放宽到整个 3.x 是因为宿主已经实装 3.19.0，`~3.18.5` 会让
+`peerDependencies` 对不上而告警。
 
 `devDependencies` 其余各项（TypeScript、esbuild、`@types/*`、`@deepseek-ai/dsh-*`）只在开发和
 构建时使用，不会进入发布的 tarball 运行时。

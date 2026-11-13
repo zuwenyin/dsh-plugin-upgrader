@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.8.2 — 2026-11-13
+
+- **The profile directory now comes from the host, not from the environment.** The one
+  `process.env` reference in the runtime — `profileDirFrom(env: NodeJS.ProcessEnv = process.env, …)`
+  — is gone. The harness mounts a `profileContext` service in every profile-launched process and
+  its `dir` is the very directory `plugin-manager` itself writes to, so `apply()` now records that
+  value (`setProfileDir(ctx.get('profileContext')?.dir)`) and `profileDirFrom()` reads it. A copy
+  of a path taken from the environment was always a second source of truth; the desktop shell has
+  never exported the variables anyway, which is why the fallback existed. Desktop hosts with no
+  `profileContext` still fall back to a working directory that parses as a profile.
+  This also removes the `credentials` permission signal that blocked the DSH Store listing: the
+  scanner's rule is that `process.env` must be immediately followed by a whitelisted member
+  access, and a default parameter never is — it was flagged even though it read no secret. The
+  signal is gone for a better reason than silencing a scanner: the host itself gets the profile
+  this way (`PluginManager` assigns `this.profile = ctx.profileContext`), and the README now says
+  the plugin reads **no** environment variable, which is true for the first time.
+- **`@deepseek-ai/schemastery` spans all of 3.x.** `~3.18.5` pinned the peer to one minor while the
+  host already ships 3.19.0, so every install printed a peer mismatch for a package that works
+  fine. Both the peer and dev declaration are now `>=3.18.5 <4.0.0`. The single-instance argument
+  hasn't changed: it stays a peer so the loader and the plugin share one schema library.
+  The dev copy was moved to 3.19.0 in the same change, so the suite now runs against the version
+  hosts actually load instead of the one this repo happened to have installed — 361 tests pass on
+  both, which is the evidence for the wider range rather than an assumption about semver.
+- **README and the rules pages say what the code now does.** The capability table, both dependency
+  sections and the in-place replacement history described the removed environment route; they now
+  describe `profileContext.dir` and the remaining `files` / `network` signals, whose section
+  explains why those two cannot honestly be removed.
+
 ## 1.8.1 — 2026-11-12
 
 - **An upgrade blocked on build scripts failed forever, and the page could not say why.** pnpm

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, readdirSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { dropDependency, profileDirFrom, restoreDependency } from '../src/host/manifest.ts'
+import { dropDependency, profileDirFrom, restoreDependency, setProfileDir } from '../src/host/manifest.ts'
 import {
   JOURNAL_FILE,
   clearJournal,
@@ -44,22 +44,34 @@ function profile(): { dir: string; manifest: () => Record<string, unknown>; clea
   }
 }
 
-test('the profile directory comes from the environment the harness exports', () => {
-  assert.equal(profileDirFrom({ DSH_PROFILE_DIR: 'D:/p' } as NodeJS.ProcessEnv), 'D:/p')
-  // Fallback for a process that only got the two older variables.
-  assert.equal(
-    profileDirFrom({ DSH_HOME: 'D:/h', DSH_PROFILE: 'desktop' } as NodeJS.ProcessEnv),
-    join('D:/h', 'profiles', 'desktop'),
-  )
-  assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, join('D:/nowhere', 'x')), undefined)
+test('the profile directory comes from the launcher, not from the environment', () => {
+  /*
+   * `profileContext.dir` is what the plugin manager itself writes to, so it is
+   * the only value that names the same profile. Reading it back here is also the
+   * whole reason this package holds no `process.env` reference at all: the
+   * launcher's environment copy is a second source of truth for the same path,
+   * and it is the copy the registry's source scan flags as a credential signal.
+   */
+  try {
+    setProfileDir('D:/p')
+    assert.equal(profileDirFrom(), 'D:/p')
+    // A blank value is not a profile: it has to fall through, not win.
+    setProfileDir('   ')
+    assert.equal(profileDirFrom(join('D:/nowhere', 'x')), undefined)
+    setProfileDir(undefined)
+    assert.equal(profileDirFrom(join('D:/nowhere', 'x')), undefined)
+  } finally {
+    setProfileDir(undefined)
+  }
 })
 
-test('a desktop host with no DSH variables falls back to a cwd that is a profile', () => {
-  // The desktop spawns the host with cwd = the profile dir and no DSH_PROFILE*;
-  // the manifest's `dsh.profile` key is what makes the cwd recognisable.
+test('a desktop host with no launcher falls back to a cwd that is a profile', () => {
+  // The desktop spawns the host with cwd = the profile dir and no launcher
+  // service; the manifest's `dsh.profile` key is what makes it recognisable.
   const fixture = profile()
   try {
-    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, fixture.dir), fixture.dir)
+    setProfileDir(undefined)
+    assert.equal(profileDirFrom(fixture.dir), fixture.dir)
   } finally {
     fixture.cleanup()
   }
@@ -70,31 +82,27 @@ test('a cwd that is not a profile is never mistaken for one', () => {
   const notJson = mkdtempSync(join(tmpdir(), 'dsh-pu-notjson-'))
   const noProfileKey = mkdtempSync(join(tmpdir(), 'dsh-pu-nokey-'))
   try {
+    setProfileDir(undefined)
     // No manifest at all.
-    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, bare), undefined)
+    assert.equal(profileDirFrom(bare), undefined)
     // A manifest that is not JSON.
     writeFileSync(join(notJson, 'package.json'), '{broken', 'utf8')
-    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, notJson), undefined)
+    assert.equal(profileDirFrom(notJson), undefined)
     // A manifest without the dsh.profile key — an ordinary package.
     writeFileSync(join(noProfileKey, 'package.json'), JSON.stringify({ name: 'x' }), 'utf8')
-    assert.equal(profileDirFrom({} as NodeJS.ProcessEnv, noProfileKey), undefined)
+    assert.equal(profileDirFrom(noProfileKey), undefined)
   } finally {
     for (const dir of [bare, notJson, noProfileKey]) rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test('an explicit environment still wins over the cwd fallback', () => {
+test('the launcher still wins over a cwd that is a profile', () => {
   const fixture = profile()
   try {
-    assert.equal(
-      profileDirFrom({ DSH_PROFILE_DIR: 'D:/p' } as NodeJS.ProcessEnv, fixture.dir),
-      'D:/p',
-    )
-    assert.equal(
-      profileDirFrom({ DSH_HOME: 'D:/h', DSH_PROFILE: 'desktop' } as NodeJS.ProcessEnv, fixture.dir),
-      join('D:/h', 'profiles', 'desktop'),
-    )
+    setProfileDir('D:/p')
+    assert.equal(profileDirFrom(fixture.dir), 'D:/p')
   } finally {
+    setProfileDir(undefined)
     fixture.cleanup()
   }
 })

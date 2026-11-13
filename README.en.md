@@ -181,11 +181,14 @@ second and writes **not one byte**, then takes the always-correct fallback path 
 better than slipping an edit into somebody else's read-modify-write and losing the entry.
 
 > The code shipped in 1.2.0, but on the desktop app it **never actually ran** between
-> 1.2.0 and 1.4.0: `profileDirFrom()` only knew `DSH_PROFILE_DIR` / `DSH_HOME` +
-> `DSH_PROFILE`, and the desktop shell exports none of them (it starts the host with
-> the profile directory as its working directory), so step 2 bailed on its first line
-> and every upgrade quietly took the remove + install path. 1.4.1 added the working
-> directory fallback. See item 2 of [AGENTS.md](./AGENTS.md), "replacing a version does
+> 1.2.0 and 1.4.0: `profileDirFrom()` only knew the environment variables
+> (`DSH_PROFILE_DIR` / `DSH_HOME` + `DSH_PROFILE`), and the desktop shell exports none of
+> them (it starts the host with the profile directory as its working directory), so step 2
+> bailed on its first line and every upgrade quietly took the remove + install path.
+> 1.4.1 added the working directory fallback; since 1.8.2 the directory comes straight
+> from the `profileContext.dir` the host injects, and the environment path is gone
+> entirely (see "Permissions, dependencies and external services" below).
+> See item 2 of [AGENTS.md](./AGENTS.md), "replacing a version does
 > **not** uninstall first".
 
 ### An interrupted upgrade repairs itself
@@ -302,11 +305,10 @@ The registry choice (`registry` / `customRegistries`) is written into the profil
 `cordis.patch.yml` by the **host's settings service**, not by the plugin editing files:
 the plugin only calls `configForms.set()`.
 
-Three environment variables are read, all to *locate the profile directory*:
-`DSH_PROFILE_DIR`, `DSH_HOME` and `DSH_PROFILE`. When the desktop shell exports none of
-them, a working directory that parses as a profile is used instead. They are not
-secrets, but a bare `process.env` counts as one "credentials" signal in a static scan,
-so the real purpose is spelled out here.
+The profile directory is the `profileContext.dir` the host injects; the plugin reads
+**no environment variable at all**. In a desktop shell (or any host without that
+service) it falls back to "does the working directory look like a profile" — it reads the
+`dsh.profile` field of `cwd/package.json` rather than guessing a path.
 
 ### External services
 
@@ -325,10 +327,11 @@ mirror, or a source you add yourself. **No telemetry** of any kind is sent.
 ### Dependencies
 
 There are **no bundled runtime dependencies**. The single external module,
-`@deepseek-ai/schemastery` (used for the Config schema, `~3.18.5`), is declared in
+`@deepseek-ai/schemastery` (used for the Config schema, `>=3.18.5 <4.0.0`), is declared in
 `peerDependencies` and supplied by the host: DSH desktop ships it as its own dependency
 and first-party packages such as `dsh-plugin-manager` depend on it too, so it always
-resolves inside a profile. The copy needed for building and testing lives in
+resolves inside a profile. The range spans all of 3.x because the host already installs
+3.19.0, where `~3.18.5` would raise a peer mismatch. The copy needed for building and testing lives in
 `devDependencies`.
 
 The remaining `devDependencies` (TypeScript, esbuild, `@types/*`, `@deepseek-ai/dsh-*`)

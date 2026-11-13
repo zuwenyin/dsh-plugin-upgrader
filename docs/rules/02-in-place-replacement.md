@@ -26,6 +26,9 @@ pnpm 根本不会跑。所以换版本的正确顺序是：
   而桌面壳启动宿主时**不导出**这些变量（桌面壳直接把 profile 目录当作子进程的 cwd），
   于是 `replaceWithoutRemoval` 第一行就 `return undefined`，1.2.0 到 1.4.0 全部悄悄
   走 remove + install——代码看着是对的，日志也没报错，只是每次都卸载。1.4.1 加了 cwd 回退。
+  1.8.2 把目录来源换成宿主注入的 `profileContext.dir`（`setProfileDir()`），环境变量那条路
+  整个删掉了，顺带消掉商店的 `credentials` 信号（见
+  [15-capability-declaration.md](./15-capability-declaration.md) 的补记）。
 - 第二次是观感：日志里先出现一条 `install`、再出现一条 `install`，中间什么都没有，
   读起来像「先删再装」。现在三条日志都写明意图（见下）。
 
@@ -74,9 +77,9 @@ why the first install did nothing`）、`test/manifest.test.ts`（
 | `runStep` | `src/host/install.ts:627` | ✅ 存在 |
 | `replaceWithoutRemoval` | `src/host/install.ts:526` | ✅ 存在 |
 | `removeForReplacement` | `src/host/install.ts:242` | ✅ 存在 |
-| `profileDirFrom` | `src/host/manifest.ts:89` | ✅ 存在 |
-| `profileDirFromCwd` | `src/host/manifest.ts:106` | ✅ 存在 |
-| `DSH_PROFILE_DIR` / `DSH_HOME` / `DSH_PROFILE` | `src/host/manifest.ts:90` / `:92` / `:93`（都在 `profileDirFrom` 体内） | ✅ 存在 |
+| `profileDirFrom` | `src/host/manifest.ts:111` | ✅ 存在 |
+| `profileDirFromCwd` | `src/host/manifest.ts:122` | ✅ 存在 |
+| `setProfileDir` | `src/host/manifest.ts:91`（`apply()` 从 `ctx.get('profileContext')` 取值后调用） | ✅ 存在 |
 
 ## 守护用例核对（2026-11-04）
 

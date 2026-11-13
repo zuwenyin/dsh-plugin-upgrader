@@ -36,7 +36,7 @@ import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildHostInfo } from './host/hostinfo.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type InstallGuard, type StepOutcome } from './host/install.ts'
-import { profileDirFrom, recoverPendingDrops } from './host/manifest.ts'
+import { profileDirFrom, recoverPendingDrops, setProfileDir } from './host/manifest.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
 import { dshRequirementOf, fetchPackument, probeRegistry, type VersionManifest } from './host/registry.ts'
 import { runtimeVersionOf } from './host/runtime.ts'
@@ -231,6 +231,18 @@ interface RawStep {
  *   is read per request instead of copied once at load.
  */
 export function apply(ctx: HostContext, config?: UpgraderConfig): void {
+  /*
+   * Record the profile the launcher reported, before anything can ask for it.
+   *
+   * `profileContext.dir` is the directory the plugin manager itself writes to,
+   * so it names the same profile this plugin is editing. The service is absent
+   * on a desktop host and on a composition booted without a launcher, and then
+   * `profileDirFrom` falls back to recognising a profile in the cwd; recording
+   * `undefined` keeps that path intact instead of pinning a wrong answer.
+   */
+  const launcher = ctx.get('profileContext', false) as { dir?: unknown } | null | undefined
+  setProfileDir(typeof launcher?.dir === 'string' ? launcher.dir : undefined)
+
   const packumentCache = new Map<string, PackumentEntryLike>()
   const tagCache = new Map<string, TagEntryLike>()
   const store = sharedJobStore()
