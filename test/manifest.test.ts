@@ -107,6 +107,65 @@ test('the launcher still wins over a cwd that is a profile', () => {
   }
 })
 
+test('apply() records the directory profileContext reports', async () => {
+  /*
+   * The wiring, not just the setter. `profileDirFrom` returning a recorded
+   * directory proves nothing if `apply()` never records one — and every other
+   * test in this file calls `setProfileDir` directly, so deleting those two
+   * lines in `apply()` would leave the whole suite green while the desktop-less
+   * host silently fell back to the cwd on every request.
+   *
+   * A host that mounts the service is the case this pins; the fallback case is
+   * covered above.
+   */
+  const { apply } = await import('../src/index.ts')
+  const ctx = {
+    get(name: string) {
+      return name === 'profileContext' ? { dir: 'D:/from-launcher' } : undefined
+    },
+    effect(callback: () => () => void) {
+      callback()
+    },
+    on() {
+      return () => {}
+    },
+    webServer: { register: () => () => {} },
+  }
+  try {
+    setProfileDir(undefined)
+    apply(ctx as unknown as Parameters<typeof apply>[0])
+    assert.equal(profileDirFrom(join('D:/nowhere', 'x')), 'D:/from-launcher')
+  } finally {
+    setProfileDir(undefined)
+  }
+})
+
+test('apply() records nothing when the host has no profileContext', async () => {
+  // The desktop case: no service, so the recorded value must stay empty and the
+  // cwd fallback must remain the only answer. Recording a guess here would pin
+  // the wrong profile for the life of the process.
+  const { apply } = await import('../src/index.ts')
+  const ctx = {
+    get() {
+      return undefined
+    },
+    effect(callback: () => () => void) {
+      callback()
+    },
+    on() {
+      return () => {}
+    },
+    webServer: { register: () => () => {} },
+  }
+  try {
+    setProfileDir('D:/stale')
+    apply(ctx as unknown as Parameters<typeof apply>[0])
+    assert.equal(profileDirFrom(join('D:/nowhere', 'x')), undefined, 'a stale value must be cleared, not kept')
+  } finally {
+    setProfileDir(undefined)
+  }
+})
+
 test('dropping an entry leaves every other field alone', () => {
   const fixture = profile()
   try {
