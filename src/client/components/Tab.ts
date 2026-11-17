@@ -14,7 +14,7 @@ import { reloadWhenBootDocumentFresh } from '../boot.ts'
 import { getH, getReact } from '../env.ts'
 import { diagnosticsReport, needsAttention } from '../diagnostics.ts'
 import { activeLocaleId, replacedAppearance, useAlive, useLocaleRevision } from '../hooks.ts'
-import { useRegistrySetting } from '../registry.ts'
+import { useRegistrySetting, useTuningSetting } from '../registry.ts'
 import { CSS, STYLE_ID } from '../styles.ts'
 import type {
   Banner,
@@ -30,6 +30,7 @@ import { JobPanel } from './JobPanel.ts'
 import { PluginRow } from './PluginRow.ts'
 import { RestartDialog } from './RestartDialog.ts'
 import { RegistrySourceButton } from './SourceDialog.ts'
+import { TuningSwitch } from './TuningSwitch.ts'
 
 /**
  * This package's own name.
@@ -72,6 +73,7 @@ export function Tab(props: TabProps): unknown {
   const localeId = React.useMemo(() => activeLocaleId(locale), [locale, revision])
   const { data, error, loading, reload } = useOverview(localeId)
   const registry = useRegistrySetting(configForms, 'plugin-upgrader')
+  const tuning = useTuningSetting(configForms, 'plugin-upgrader')
 
   const [query, setQuery] = React.useState('')
   /**
@@ -529,6 +531,13 @@ export function Tab(props: TabProps): unknown {
                 disabled: busy,
                 onChanged: () => reload(true),
               }),
+          /*
+           * Beside the source picker because it is the other thing about this
+           * profile the tab changes outside its own list. It is drawn even when a
+           * host offers no settings service, since the copy still has to admit
+           * that a batch rewrites pnpm's file.
+           */
+          h(TuningSwitch, { t, setting: tuning, disabled: busy }),
         ),
       ),
       h(

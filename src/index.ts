@@ -26,17 +26,19 @@
  * read from and which one an install asks first, the second is the list of
  * sources the picker offers beside the two built-in ones. Both are declared
  * volatile so the host's settings service exposes them, and so a change reaches
- * the running plugin without restarting DSH.
+ * the running plugin without restarting DSH. `pnpmTuning` is the third: it lets
+ * a batch shorten pnpm's retry waits in the profile (`./host/pnpm-tuning.ts`).
  *
  * @module dsh-plugin-upgrader
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { savedRegistry, type UpgraderConfig } from './host/config.ts'
+import { savedPnpmTuning, savedRegistry, type UpgraderConfig } from './host/config.ts'
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildHostInfo } from './host/hostinfo.ts'
 import { buildOverview } from './host/overview.ts'
 import { runStep, validateStep, type InstallGuard, type StepOutcome } from './host/install.ts'
 import { profileDirFrom, recoverPendingDrops, setProfileDir } from './host/manifest.ts'
+import { applyTuning, type TuningResult } from './host/pnpm-tuning.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
 import { dshRequirementOf, fetchPackument, probeRegistry, type VersionManifest } from './host/registry.ts'
 import { runtimeVersionOf } from './host/runtime.ts'
@@ -286,6 +288,27 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
     }
   }
 
+  /**
+   * Say what the tuning pass did, in the run log.
+   *
+   * Every outcome is stated, including the ones that changed nothing: a batch
+   * that starts with "pnpm retry settings: already set" is telling the reader
+   * that the two minutes below are not this plugin's fault, and a batch that
+   * could not write says so instead of silently running slow.
+   *
+   * @param result - what {@link applyTuning} reported.
+   * @returns the log line.
+   */
+  const describeTuning = (result: TuningResult): string => {
+    if (result.status === 'written') {
+      const backup = result.backup === true ? ', original kept as pnpm-workspace.yaml.upgrader-bak' : ''
+      return `pnpm retry settings: added ${result.added.join(', ')} to pnpm-workspace.yaml${backup}`
+    }
+    if (result.status === 'unchanged') return 'pnpm retry settings: already set'
+    const detail = result.detail === undefined ? '' : ` (${result.detail})`
+    return `pnpm retry settings: left alone — ${result.reason ?? 'skipped'}${detail}`
+  }
+
   /** The manager, or a reason the request cannot be served. */
   const requireManager = (): PluginManager | undefined => asPluginManager(ctx.get('pluginManager', false))
 
@@ -341,6 +364,18 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
       job.heartbeatAt = Date.now()
     }, HEARTBEAT_MS)
     try {
+      /*
+       * Shorten pnpm's retry waits before the first install, not per step.
+       *
+       * The setting lives in a file every pnpm run in this profile reads, so one
+       * write covers the whole batch. It is best-effort by design: a lock held by
+       * another writer, a read-only profile, or a user who turned the switch off
+       * all leave the file alone and the batch runs exactly as it did before.
+       */
+      if (savedPnpmTuning(config)) {
+        const tuning = applyTuning(profileDirFrom())
+        appendLog(job, describeTuning(tuning))
+      }
       for (const step of steps) {
         if (job.cancelled) break
         job.current = `${step.name}@${step.version}`

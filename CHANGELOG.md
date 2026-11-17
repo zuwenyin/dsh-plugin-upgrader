@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.9.0 — 2026-11-17
+
+- **An upgrade no longer spends minutes waiting out pnpm's retry backoff.** The slow part of a
+  batch was never the download. pnpm 11 verifies every lockfile entry against the registry before
+  installing, and on a mainland mirror a handful of those requests reliably `ETIMEDOUT`; pnpm's
+  defaults then back off from 10 seconds, doubling to a 60-second ceiling, and really waits each
+  time. A cold check of this profile's 91-entry lockfile measured 2m15s, of which under 30 seconds
+  was work. Sixteen minutes of one 24-minute batch went to eight of those checks.
+  The fix is to shrink the waits, not the checks: each batch now writes `fetchRetries: 4`,
+  `fetchRetryMintimeout: 500`, `fetchRetryMaxtimeout: 2500` and `fetchTimeout: 30000` into the
+  profile's `pnpm-workspace.yaml`. **Both halves are required** — tightening only the backoff
+  still cost 43.4 s, shrinking only the timeout left 2m14.6 s (a 60-second default timeout is
+  waited out in full), and the pair gives 21.6–26.1 s with `ETIMEDOUT` at zero. The same real
+  `pnpm add` on the same day: 4m08s → 48.8 s.
+  The write is deliberately timid: only missing top-level keys, appended, never a rewrite; one
+  write per batch; a `pnpm-workspace.yaml.upgrader-bak` copy before the first change; and if the
+  profile writer lock cannot be taken, **not one byte** is written and the log says so. A new
+  "Retry waits" button on the Versions tab turns it off, and turning it off does not delete lines
+  already written.
+  What it does **not** do: `minimumReleaseAge` and `trust-lockfile` are untouched. Switching them
+  off is faster still — 12 ms per check — but that is pnpm 11's defence against a malicious
+  freshly-published package, and trading it for speed is the user's call, not this plugin's.
+  Verified by a mutation run: six independent breakages of the new module each turn the suite red.
+  Details and measurements: [`docs/rules/27-pnpm-tuning.md`](docs/rules/27-pnpm-tuning.md).
+
 ## 1.8.2 — 2026-11-13
 
 - **The profile directory now comes from the host, not from the environment.** The one

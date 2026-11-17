@@ -29,6 +29,12 @@ English · [中文](./README.md)
 - **Progress you can actually see** — the raw pnpm output (registry retries, lockfile
   verification), a live elapsed clock per step, an indeterminate bar while a step
   runs, and a cancel button that works.
+- **No more idling through pnpm retries** — before a batch runs, pnpm's timeouts and
+  retry spacing are tightened and written into the profile's `pnpm-workspace.yaml`, so a
+  mirror timeout costs a few seconds instead of a minute. The supply-chain check still
+  runs; only the waiting is cut. Same lockfile, cold check: over two minutes → around
+  20 s; end to end 4m08s → 48.8 s. The "Retry waits" button on the Versions tab turns it
+  off (see below).
 - **Multi-select upgrade** — tick any subset of plugins and upgrade only those.
 - **Version history / rollback** — expand any plugin to see every published version
   (with publish date and engine requirement) and switch to it in one click. Every
@@ -248,6 +254,40 @@ Two related bugs fixed with it:
 - The reinstall on the fallback path passed `requestId: undefined`, making that
   stretch uncancellable. Every install now has its own id, so cancel works throughout.
 
+### Where that extra minute goes: pnpm's retry ladder
+
+The slow part is not the download. It is pnpm's *retry backoff*. Verifying each lockfile
+entry hits a stable `ETIMEDOUT` on a mainland mirror, and pnpm's defaults back off from
+10 seconds, doubling to a 60-second ceiling — every timeout really waits that long. With
+90-odd entries, a handful of misses eats two minutes: a cold check of a 91-entry lockfile
+measured 2m15s, of which under 30 seconds was work.
+
+So before a batch runs, four keys are added to the profile's `pnpm-workspace.yaml`
+(only the ones that are missing; existing lines are never touched):
+
+```yaml
+fetchRetries: 4
+fetchRetryMintimeout: 500
+fetchRetryMaxtimeout: 2500
+fetchTimeout: 30000
+```
+
+**The timeout and the backoff have to move together.** Tightening only the backoff still
+costs 43 s; shrinking only the timeout leaves 2m14s (the default timeout is 60 s, so a
+stuck connection is waited out in full); both together give 21–26 s. On one machine and
+one mirror, end to end: 4m08s → 48.8 s, with `ETIMEDOUT`s dropping from 20-odd to zero.
+
+The supply-chain check itself still runs — it just stops idling. `minimumReleaseAge`
+(pnpm 11's "a dependency must be 24 hours old" anti-poisoning gate) and `trust-lockfile`
+are deliberately left alone: switching them off would be faster, but that trades safety
+for speed and is not this plugin's call to make.
+
+The write is bounded: if the profile writer lock cannot be taken, nothing at all is
+written; the first change leaves a `pnpm-workspace.yaml.upgrader-bak` copy; only missing
+top-level keys are appended, never reordered or rewritten. A batch writes once. The
+"Retry waits" button on the Versions tab turns it off — which only stops future writes
+and **does not delete lines already there** (deleting them by hand does the same thing).
+
 ### A writer-lock timeout in plain words
 
 The harness serializes writers of the profile `package.json` through a sibling
@@ -296,7 +336,7 @@ report does not have to read the source to find out.
 
 | Capability | Scope | Notes |
 | --- | --- | --- |
-| Files | **the profile directory only** | Reads and writes `package.json`, writes `package.json.upgrader-journal.json`, reads and briefly takes `package.json.lock`. No filesystem walking, nothing outside the profile |
+| Files | **the profile directory only** | Reads and writes `package.json`, writes `package.json.upgrader-journal.json`, reads and briefly takes `package.json.lock`, appends pnpm's retry settings to `pnpm-workspace.yaml` with a `.upgrader-bak` copy. No filesystem walking, nothing outside the profile |
 | Network (outbound) | the configured npm registry, the GitHub API | `GET` only, see below |
 | Commands | **none** | No `child_process`, no spawned processes; installs go through the host's `pluginManager` |
 | Credentials | **none** | No tokens, no `.npmrc` reads, no authentication. Private registries rely on pnpm's own configuration |

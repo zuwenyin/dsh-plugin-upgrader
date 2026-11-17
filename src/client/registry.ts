@@ -28,6 +28,9 @@ export const REGISTRY_FIELD = 'registry'
 /** The config field holding the sources the user added. */
 export const SOURCES_FIELD = 'customRegistries'
 
+/** The config field allowing a batch to shorten pnpm's retry waits. */
+export const TUNING_FIELD = 'pnpmTuning'
+
 /**
  * The two addresses worth offering without asking the host.
  *
@@ -194,6 +197,90 @@ export function useRegistrySetting(configForms: ConfigFormsLike | undefined, nam
        * and restating the list keeps an edit and a removal the same code path.
        */
       return configForms.get(namespace).set(SOURCES_FIELD, [...value])
+    },
+  }
+}
+
+/**
+ * A boolean setting with the same live-read behaviour as the source list.
+ *
+ * Kept separate from {@link useRegistrySetting} rather than generalizing that
+ * one: the source dialog needs the two string fields together, and threading a
+ * third unrelated value through it would make every reader of `RegistrySetting`
+ * carry a flag it never looks at.
+ */
+export interface TuningSetting {
+  /** Whether a batch may shorten pnpm's retry waits. */
+  enabled: boolean
+  /** Whether the host would accept a write right now. */
+  writable: boolean
+  /** Why the switch cannot be used, when it cannot. */
+  unavailable: string | undefined
+  /** Persist the new value. */
+  save: (value: boolean) => Promise<boolean>
+}
+
+/**
+ * Read the tuning switch out of one form snapshot.
+ *
+ * Only an explicit `false` turns it off, matching the host: a profile patched
+ * before the field existed reports nothing here, and the fast path is what such
+ * a profile has been getting since this version installed.
+ *
+ * @param snapshot - the form snapshot, when there is one.
+ * @returns the value and whether it can be written.
+ */
+function readTuning(snapshot: ConfigFormSnapshotLike | undefined): { enabled: boolean; writable: boolean } {
+  const value = snapshot?.value?.[TUNING_FIELD]
+  return {
+    enabled: value !== false,
+    writable: snapshot?.writable === true && snapshot.status === 'ready',
+  }
+}
+
+/**
+ * Read and write the pnpm retry tuning switch, keeping it live.
+ *
+ * @param configForms - the client service, when the host provides one.
+ * @param namespace - the plugin entry id the settings are filed under.
+ * @returns the setting, its current value, and the writer.
+ */
+export function useTuningSetting(configForms: ConfigFormsLike | undefined, namespace: string): TuningSetting {
+  const React = getReact()
+  const [snapshot, setSnapshot] = React.useState<ConfigFormSnapshotLike | undefined>(undefined)
+
+  React.useEffect(() => {
+    if (configForms === undefined) return undefined
+    let live = true
+    const form = configForms.get(namespace)
+    const sync = (): void => {
+      if (live) setSnapshot(form.getSnapshot())
+    }
+    sync()
+    const off = form.subscribe(sync)
+    return () => {
+      live = false
+      if (typeof off === 'function') off()
+    }
+  }, [configForms, namespace])
+
+  if (configForms === undefined) {
+    return {
+      enabled: true,
+      writable: false,
+      unavailable: 'no-config-forms',
+      save: () => Promise.resolve(false),
+    }
+  }
+
+  const { enabled, writable } = readTuning(snapshot)
+  return {
+    enabled,
+    writable,
+    unavailable: snapshot === undefined ? 'loading' : writable ? undefined : 'not-writable',
+    save: async (value: boolean): Promise<boolean> => {
+      if (configForms === undefined) return false
+      return configForms.get(namespace).set(TUNING_FIELD, value)
     },
   }
 }

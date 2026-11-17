@@ -23,6 +23,10 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
   拿不到 profile 写入锁、或 in-place 那一步被拒时，会退回「先卸载再装」的老路并写明原因。
 - **看得见的进度** —— 升级时直接显示 pnpm 的原始输出（含换源重试、lockfile 校验），
   每步都有已用时计时和不确定态进度条，卡住时可以一键取消。
+- **不再空等 pnpm 重试** —— 升级前把 pnpm 的超时与重试间隔收紧后写进 profile 的
+  `pnpm-workspace.yaml`，让镜像超时最多耗几秒而不是一分钟；供应链校验照做，只砍等待。
+  同一个锁文件冷校验从 2 分多钟降到 20 秒上下，端到端 4 分 8 秒 → 48.8 秒。
+  版本页的「重试等待」按钮可以关掉它（详见下文）。
 - **多选升级** —— 勾选任意几个插件，只升级选中的这些。
 - **版本历史 / 回滚** —— 展开任意插件即可看到已发布的全部版本（含发布时间与引擎要求），点一下切到那个版本。
   每个版本都会先跟你**当前跑的 DSH** 比对一次：装不了的版本会被标出来，切换按钮也是禁用的
@@ -202,6 +206,35 @@ manifest 里确实缺这条就补回去，已经装上就只清掉记录，记�
 - 退回老路径时那一次重新安装以前用 `requestId: undefined`，导致那一段无法取消；
   现在每次安装都有自己的 id，取消在任何阶段都有效。
 
+### 那一分多钟的去处：pnpm 的重试阶梯
+
+慢的大头不是下载，是 pnpm 的**重试退避**。校验每一条锁文件条目时，国内镜像会稳定地
+`ETIMEDOUT`；pnpm 的默认退避是 10 秒起步、翻倍到 60 秒封顶，每次超时都要**真等**那么久。
+90 多条要校验，几条撞上就吃掉两分钟——实测一个包含 91 条条目的锁文件冷校验
+2 分 15 秒，其中真正干活的时间不到 30 秒。
+
+所以升级前会在 profile 的 `pnpm-workspace.yaml` 里补上四个键（缺哪个补哪个，已有的不动）：
+
+```yaml
+fetchRetries: 4
+fetchRetryMintimeout: 500
+fetchRetryMaxtimeout: 2500
+fetchTimeout: 30000
+```
+
+**超时和退避必须一起收**：只收紧退避还是 43 秒，只调小超时是 2 分 14 秒（超时默认
+60 秒，卡住的连接要等满一分钟才作废），两个一起才是 21–26 秒。同一台机器、同一个镜像，
+端到端从 4 分 8 秒降到 48.8 秒，`ETIMEDOUT` 从 20 多次降到 0。
+
+供应链校验**照做**——只是不再空等。这里不碰 `minimumReleaseAge`（pnpm 11 的
+「依赖必须发布满 24 小时」投毒防线）也不碰 `trust-lockfile`：拿掉它们确实能快，但那是
+拿安全换速度，不该由这个插件替用户决定。
+
+写入有边界：只在**拿不到写入锁时整段跳过**（一个字节都不写）、第一次改动前留一份
+`pnpm-workspace.yaml.upgrader-bak`、只追加缺失的顶层键，从不重排或重写已有内容。
+整批升级只写一次。版本页的「重试等待」按钮可以关掉它；关掉只是以后不再写，
+**不会删掉已经写进去的那几行**（删掉那几行效果一样）。
+
 ### 写入锁超时说人话
 
 profile 的 `package.json` 由 harness 用同目录的 `package.json.lock` 串行化。
@@ -242,7 +275,7 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 
 | 能力 | 范围 | 说明 |
 | --- | --- | --- |
-| 文件 | **仅 profile 目录** | 读写 `package.json`、写 `package.json.upgrader-journal.json`、读写并短暂持有 `package.json.lock`。不遍历文件系统，不碰 profile 以外的路径 |
+| 文件 | **仅 profile 目录** | 读写 `package.json`、写 `package.json.upgrader-journal.json`、读写并短暂持有 `package.json.lock`、向 `pnpm-workspace.yaml` 追加 pnpm 的重试设置并留一份 `.upgrader-bak` 备份。不遍历文件系统，不碰 profile 以外的路径 |
 | 网络（出站） | 配置的 npm 源、GitHub API | 只发 `GET`，见下 |
 | 命令 | **无** | 不调用 `child_process`，不 spawn 任何进程；安装动作交给宿主的 `pluginManager` |
 | 凭据 | **无** | 不读 token，不读 `.npmrc`，不做任何认证。私有源依赖 pnpm 自己的配置 |

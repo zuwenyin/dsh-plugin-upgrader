@@ -39,6 +39,16 @@ export interface UpgraderConfig {
    * keeps a hand-written config object (or a test's) compiling.
    */
   customRegistries?: Volatile<string[]>
+  /**
+   * Whether a batch may add pnpm's retry settings to the profile's workspace
+   * manifest.
+   *
+   * Optional here and defaulted on in the schema, so a profile patched before
+   * this field existed (and a test's hand-written config) still gets the faster
+   * behaviour. The switch exists because the change is visible outside this tab:
+   * it edits a file pnpm also writes.
+   */
+  pnpmTuning?: Volatile<boolean>
 }
 
 /** The public registry, named so the picker can offer it without a lookup. */
@@ -74,6 +84,15 @@ export const Config = z.object({
    * what keeps the list usable after a user removes every source they added.
    */
   customRegistries: z.array(z.string().pattern(SOURCE_PATTERN)).default([]).volatile(),
+  /**
+   * Whether a batch may shorten pnpm's retry waits in the profile.
+   *
+   * On by default because the default pnpm numbers cost minutes per install on a
+   * mirror that drops connections, and the alternative a user actually wants is
+   * not "wait longer" but "stop waiting". Off is for a profile whose workspace
+   * manifest somebody else manages.
+   */
+  pnpmTuning: z.boolean().default(true).volatile(),
 })
 
 /**
@@ -92,6 +111,26 @@ export function savedRegistry(config: UpgraderConfig | undefined | null): string
     return typeof value === 'string' ? value.trim() : ''
   } catch {
     return ''
+  }
+}
+
+/**
+ * Whether a batch may tune pnpm's retry settings for this profile.
+ *
+ * Defaults to true, and reads the live reference on every call for the same
+ * reason the registry does: a switch flipped in the browser must reach the next
+ * batch without restarting the host. Only an explicit `false` turns it off — an
+ * older config that never heard of the field keeps the faster behaviour.
+ *
+ * @param config - the config `apply` received, possibly undefined.
+ * @returns whether the tuning may run.
+ */
+export function savedPnpmTuning(config: UpgraderConfig | undefined | null): boolean {
+  try {
+    const value = config?.pnpmTuning?.get?.()
+    return value !== false
+  } catch {
+    return true
   }
 }
 
