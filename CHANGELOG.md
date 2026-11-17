@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.9.1 — 2026-11-17
+
+- **The 换源 and 重启 dialogs keep a readable surface under a wallpaper skin.** Reported as
+  「换源弹框透明度好像太高了，导致文字不清晰」. The dialogs paint from `--dsw-alias-bg-layer-1`,
+  which the host authors opaque (`#fff` / `#232324`), so the plugin was never translucent on its
+  own — an appearance skin repaints that channel. `dsh-dream-skin` publishes the pre-wash originals
+  as `--dsh-dream-skin-layer-src-1..3` and then rewrites layer-1..3 inside the plugin page as
+  `color-mix(in srgb, var(--dsh-dream-skin-layer-src-N) var(--dsh-dream-skin-page-fill, 92%), transparent)`.
+  Its dialog-opacity floor covers only `--dsw-alias-bg-overlay`, `--dsw-specific-menu` and
+  layer-2; **layer-1 is not in that list**. With a wallpaper set and 壁纸不透明度 at 0 — this
+  profile's setting — the page fill is 0%, layer-1 resolves to fully transparent, and the modal
+  card paints nothing while its text sits on the blurred page behind it.
+  The fix is a plugin-side fallback rather than a skin special-case: `.dsh-pu` now declares
+  `--dsh-pu-surface-1..3: var(--dsh-dream-skin-layer-src-N, var(--dsw-alias-bg-layer-N))` and
+  every surface paints `var(--dsh-pu-surface-N)` plus a `color-mix(… var(--dsh-pu-surface-fill), transparent)`
+  layer, the fill defaulting to 100%. Without a skin the `…-layer-src-N` names are undefined, each
+  var resolves to the very token the rule used before, and a 100% mix is the opaque declaration —
+  so the no-skin rendering is unchanged; with a skin the surface takes the opaque pre-wash colour
+  and the mix only applies that skin's own dialog opacity. The rule needs no skin detection, no
+  `getComputedStyle`, and no new dependency.
+  Converting one surface exposed a second bug on the same row: `.dsh-pu-src-row.is-active` was
+  `color-mix(… brand 9%, transparent)`, a tint with nothing underneath, so the source in use read
+  as *washed out* instead of emphasized. It now mixes over `--dsh-pu-surface-2`.
+  Verified by a mutation run: five independent breakages (dropping a skin source, defaulting the
+  fill to 0%, painting the modal body from the raw token, dropping the fill mix, restoring the
+  transparent active row) each turn the new `test/stylesheet.test.ts` red.
+
 ## 1.9.0 — 2026-11-17
 
 - **An upgrade no longer spends minutes waiting out pnpm's retry backoff.** The slow part of a
