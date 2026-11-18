@@ -34,7 +34,7 @@ English · [中文](./README.md)
   mirror timeout costs a few seconds instead of a minute. The supply-chain check still
   runs; only the waiting is cut. Same lockfile, cold check: over two minutes → around
   20 s; end to end 4m08s → 48.8 s. The "Retry waits" button on the Versions tab turns it
-  off (see below).
+  off ([what that button is](#what-the-retry-waits-button-is)).
 - **Multi-select upgrade** — tick any subset of plugins and upgrade only those.
 - **Version history / rollback** — expand any plugin to see every published version
   (with publish date and engine requirement) and switch to it in one click. Every
@@ -110,6 +110,9 @@ own market page):
     reported mainland mirrors as unreachable — their `/-/ping` can take 15 s while the
     root answers in 0.3 s), and shows the verdict under that row
   - the footer's *Follow pnpm's config* keeps pnpm's own registry (usually `.npmrc`)
+- The **Retry waits** pill next to it says whether the next batch will shorten pnpm's
+  timeouts and retry spacing, and pressing it switches to *pnpm defaults* so it stops
+  (see [What the "Retry waits" button is](#what-the-retry-waits-button-is))
 - **Upgrade all** handles every upgradable plugin; the selection bar below handles
   **Upgrade selected**
 - **Check for updates** bypasses the 5-minute registry cache
@@ -126,6 +129,74 @@ own market page):
     offline) → the repository's `releases` feed
 
 ![Expanded history](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
+
+## What the "Retry waits" button is
+
+In one sentence: **it stops pnpm from sitting idle, without changing what pnpm checks.**
+
+The slow part of an upgrade is never the download — it is the check that runs before it.
+pnpm 11 takes every entry in the lockfile and asks the registry about it again ("is this
+version still there, does it pass the supply-chain policy?"), and it asks 64 of them at
+once. Mirrors in mainland China do not love that burst of parallel connections, so a few
+requests time out. pnpm's default reaction to a timeout is to **wait**: ten seconds, retry,
+then one minute, retry. Thirty seconds of work turns into two or three minutes, and on
+screen it looks exactly like a hang.
+
+While the button reads **Retry waits · shortened**, the plugin appends four numbers to the
+profile's `pnpm-workspace.yaml` **before** your next batch:
+
+| Key | Value | What it controls |
+| --- | --- | --- |
+| `fetchTimeout` | 30000 | a wedged connection is abandoned after 30 s (pnpm's default is 60 s) |
+| `fetchRetries` | 4 | at most four attempts after a failure |
+| `fetchRetryMintimeout` | 500 | the first retry waits half a second |
+| `fetchRetryMaxtimeout` | 2500 | later retries wait at most 2.5 s, never a whole minute |
+
+**Not one check is skipped.** Only the waiting changes: if nobody answers, try again right
+away instead of standing there for a full minute. Measured on one machine against one
+mirror: a cold lockfile verification went from 2m15s to 22–26 s, a real `pnpm add` from
+4m08s to 48.8 s, and `ETIMEDOUT` from 22 occurrences to zero.
+
+What it **does not** touch: `minimumReleaseAge` (pnpm 11's defence against a freshly
+published malicious package) and `trust-lockfile`. Turning those off is much faster still,
+but that trades security for speed, and that call belongs to you, not to an upgrade plugin.
+
+### The button's two states
+
+- **shortened** (the default): before the next batch, whichever of the four keys is
+  missing gets appended.
+- **pnpm defaults**: nothing is written any more. **Lines already written are not
+  deleted** — they are ordinary settings in your own file, and the plugin does not tidy
+  them up behind your back. To undo it, delete those four lines by hand, or restore the
+  `pnpm-workspace.yaml.upgrader-bak` copy taken before the first change.
+
+Either state only affects **future** batches. The choice lives in the profile, applies
+immediately, and needs no restart.
+
+### How careful the write is
+
+pnpm appends to that same file itself (`allowBuilds`, `minimumReleaseAgeExclude`), so the
+plugin makes the smallest edit that can work:
+
+- only **missing top-level keys are appended**; existing lines are not touched, reordered,
+  or re-serialized
+- a hyphenated `fetch-retries: 5` you wrote by hand counts as already set, so no
+  `fetchRetries: 4` is appended on top of your choice
+- **one write per batch**, not one per plugin
+- if the profile's writer lock cannot be taken, **not one byte** is written; that batch
+  still runs, just slower
+- the first change leaves a `pnpm-workspace.yaml.upgrader-bak` copy, and a failed backup
+  abandons the write
+- any failure is one line in the job log and **never** interrupts the upgrade: this is a
+  speed-up, not a precondition
+
+The job log says which of the three things happened:
+`pnpm retry settings: added fetchRetries, … to pnpm-workspace.yaml`,
+`already set` (all four were there), or `left alone — lock-busy` (nothing written, plus why).
+
+One side effect worth knowing: once those four lines are in the profile, **every** pnpm in
+that profile reads them, including a `dsh plugin add` you run in a terminal — so terminal
+installs get faster too.
 
 ## Install
 
@@ -256,6 +327,9 @@ Two related bugs fixed with it:
 
 ### Where that extra minute goes: pnpm's retry ladder
 
+(For the plain-language version, see [What the "Retry waits" button
+is](#what-the-retry-waits-button-is); this section records the trade-off and the numbers.)
+
 The slow part is not the download. It is pnpm's *retry backoff*. Verifying each lockfile
 entry hits a stable `ETIMEDOUT` on a mainland mirror, and pnpm's defaults back off from
 10 seconds, doubling to a 60-second ceiling — every timeout really waits that long. With
@@ -341,9 +415,12 @@ report does not have to read the source to find out.
 | Commands | **none** | No `child_process`, no spawned processes; installs go through the host's `pluginManager` |
 | Credentials | **none** | No tokens, no `.npmrc` reads, no authentication. Private registries rely on pnpm's own configuration |
 
-The registry choice (`registry` / `customRegistries`) is written into the profile's
-`cordis.patch.yml` by the **host's settings service**, not by the plugin editing files:
-the plugin only calls `configForms.set()`.
+The registry choice (`registry` / `customRegistries`) and the retry-tuning switch
+(`pnpmTuning`) are written into the profile's `cordis.patch.yml` by the **host's settings
+service**, not by the plugin editing files: the plugin only calls `configForms.set()`.
+(The four pnpm keys in `pnpm-workspace.yaml` are a different matter — those the plugin
+does append itself, with the minimal edit described in [What the "Retry waits" button
+is](#what-the-retry-waits-button-is).)
 
 The profile directory is the `profileContext.dir` the host injects; the plugin reads
 **no environment variable at all**. In a desktop shell (or any host without that
@@ -455,14 +532,15 @@ dsh-plugin-upgrader/
 ├── src/                  sources (TypeScript)
 │   ├── index.ts          host entry: route registration, job scheduling
 │   ├── host/             host-side logic (Node, no DOM)
-│   │   ├── overview.ts   assembles the overview payload
-│   │   ├── registry.ts   packument fetch / shaping, GitHub tag lists
-│   │   ├── install.ts    one install step plus enabled-state restore
-│   │   ├── bundle.ts     bundle metadata (source kind, i18n fields, icons)
-│   │   ├── repo.ts       repository URL normalisation
-│   │   ├── version.ts    semver comparison, release links
-│   │   ├── http.ts       loopback guard, JSON read/write
-│   │   └── manager.ts    the minimal host pluginManager type contract
+│   │   ├── overview.ts    assembles the overview payload
+│   │   ├── registry.ts    packument fetch / shaping, GitHub tag lists
+│   │   ├── pnpm-tuning.ts appends pnpm's timeout / retry settings to pnpm-workspace.yaml
+│   │   ├── install.ts     one install step plus enabled-state restore
+│   │   ├── bundle.ts      bundle metadata (source kind, i18n fields, icons)
+│   │   ├── repo.ts        repository URL normalisation
+│   │   ├── version.ts     semver comparison, release links
+│   │   ├── http.ts        loopback guard, JSON read/write
+│   │   └── manager.ts     the minimal host pluginManager type contract
 │   └── client/           browser side (modules, bundled into one file)
 │       ├── index.ts      createPlugin(require): slot registration entry
 │       ├── components/   Tab / PluginRow / VersionLine / JobPanel / SourceDialog
@@ -517,14 +595,15 @@ The host half lives in `src/index.ts` (a `webServer` prefix route at
 `/api/plugin-upgrader`), the browser half in `src/client/index.ts` (registering the
 `plugins.tab` slot).
 
-The user settings are `registry` (the source in use, empty for "follow pnpm") and
-`customRegistries` (the sources the user added), both declared in `src/host/config.ts`.
-Both are marked `.volatile()`, which is what makes the host's settings service expose a
-form for them and what lets a write reach the running plugin without a DSH restart. The
-browser reads and writes them through the `configForms` client service
-(`src/client/registry.ts`); a host without that service still renders the tab, with the
-source shown but not editable. The two built-in sources are constants, never entries in
-`customRegistries` — that is why no click can edit or delete them.
+The user settings are `registry` (the source in use, empty for "follow pnpm"),
+`customRegistries` (the sources the user added) and `pnpmTuning` (whether a batch may
+tighten pnpm's retry settings first, on by default), all declared in
+`src/host/config.ts`. All three are marked `.volatile()`, which is what makes the host's
+settings service expose a form for them and what lets a write reach the running plugin
+without a DSH restart. The browser reads and writes them through the `configForms` client
+service (`src/client/registry.ts`); a host without that service still renders the tab,
+with the source shown but not editable. The two built-in sources are constants, never
+entries in `customRegistries` — that is why no click can edit or delete them.
 
 `pnpm run dev` runs two watchers side by side: `tsc --watch` owns `lib/index.js`
 and `lib/host/**`, esbuild owns `lib/client.js`, so neither overwrites the other.

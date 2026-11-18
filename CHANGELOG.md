@@ -26,6 +26,19 @@
   Verified by a mutation run: five independent breakages (dropping a skin source, defaulting the
   fill to 0%, painting the modal body from the raw token, dropping the fill mix, restoring the
   transparent active row) each turn the new `test/stylesheet.test.ts` red.
+- **Docs: both READMEs now explain the "Retry waits" button in plain words.** It landed in 1.9.0
+  with a changelog entry and a `docs/rules/27-pnpm-tuning.md`, which answer "what did we change and
+  why" — not "what does this button on my screen do". The new section answers the second question:
+  that the slow part of an upgrade is pnpm's verification pass and not the download, that pnpm 11
+  asks the registry about 64 lockfile entries at once and then waits out a 10 s → 60 s backoff when
+  a few of them time out, and that the four keys it writes change only the waiting. It also says
+  what the two button states mean (and that turning it off **does not delete** lines already
+  written), what the write will and will not touch, and why `minimumReleaseAge` / `trust-lockfile`
+  are left alone. Same section in `README.en.md`. Three stale spots fixed while there: the
+  settings list said there were two user settings (there are three — `pnpmTuning` was missing), the
+  project tree had no `src/host/pnpm-tuning.ts`, and the permissions section now distinguishes the
+  settings that go through the host's settings service from the four pnpm keys the plugin appends
+  itself.
 
 ## 1.9.0 — 2026-11-17
 

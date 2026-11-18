@@ -26,7 +26,7 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
 - **不再空等 pnpm 重试** —— 升级前把 pnpm 的超时与重试间隔收紧后写进 profile 的
   `pnpm-workspace.yaml`，让镜像超时最多耗几秒而不是一分钟；供应链校验照做，只砍等待。
   同一个锁文件冷校验从 2 分多钟降到 20 秒上下，端到端 4 分 8 秒 → 48.8 秒。
-  版本页的「重试等待」按钮可以关掉它（详见下文）。
+  版本页的「重试等待」按钮可以关掉它（[它是干什么的](#重试等待是什么)）。
 - **多选升级** —— 勾选任意几个插件，只升级选中的这些。
 - **版本历史 / 回滚** —— 展开任意插件即可看到已发布的全部版本（含发布时间与引擎要求），点一下切到那个版本。
   每个版本都会先跟你**当前跑的 DSH** 比对一次：装不了的版本会被标出来，切换按钮也是禁用的
@@ -80,6 +80,8 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
     （串行探测会把大陆镜像报成连不上：`/-/ping` 有时要 15 秒，根地址只要 0.3 秒），
     结果显示在那一行下面
   - 底部「跟随 pnpm 配置」用 pnpm 自己的源（通常是 `~/.npmrc` 里的那个）
+- 与「注册表」并排的「重试等待」按钮：显示下次批量升级前会不会顺手缩短 pnpm 的超时与重试间隔，
+  点一下切成「默认」就再也不写（下一节专门讲它：[重试等待是什么](#重试等待是什么)）
 - 「一键升级」升全部可升级插件；下面一条选择栏负责「升级选中」
 - 「检查更新」强制刷新 registry 缓存（默认缓存 5 分钟）
 - 搜索框按包名过滤
@@ -94,6 +96,62 @@ DSH 自带的插件页能装、能卸、能看已安装列表，但缺两件事�
     不在页面上放一个点进去是 404 的版本号
 
 ![展开历史版本](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
+
+## 重试等待是什么
+
+一句话：**它让 pnpm 少花时间空等，不改变它检查什么。**
+
+升级插件时慢的从来不是下载，而是装之前那道核对。pnpm 11 会把锁文件里的每一条依赖拿到
+源上重新问一遍「这个版本还在吗、符合供应链策略吗」，而且一次开 64 条连接问。国内镜像对
+这种一阵风似的并发连接不太扛得住，总有几个请求超时。超时之后 pnpm 默认的脾气是**干等**：
+先等 10 秒重试一次，再等 1 分钟重试一次。几十秒就能做完的事，就这样变成了两三分钟，
+而且界面上看起来和卡死没区别。
+
+「重试等待 已缩短」这个按钮处于这个状态时，插件会在你下一次批量升级**之前**，往 profile
+目录的 `pnpm-workspace.yaml` 里补上四个数字：
+
+| 键 | 值 | 它管什么 |
+| --- | --- | --- |
+| `fetchTimeout` | 30000 | 一个卡住的连接最多等 30 秒就作废（pnpm 默认 60 秒） |
+| `fetchRetries` | 4 | 失败了最多再试 4 次 |
+| `fetchRetryMintimeout` | 500 | 第一次重试只等 0.5 秒 |
+| `fetchRetryMaxtimeout` | 2500 | 后面的重试最多等 2.5 秒，不会滚到一分钟 |
+
+**该核对的一条都没少。** 变的只是「等」：拿不到回应就赶紧重来，而不是杵在那儿等满一分钟。
+同一台机器、同一个镜像实测：一次锁文件冷校验从 2 分 15 秒降到 22–26 秒，
+一次真实的 `pnpm add` 从 4 分 8 秒降到 48.8 秒，`ETIMEDOUT` 从 22 条变成 0。
+
+它**不会**碰的：`minimumReleaseAge`（pnpm 11 的「依赖必须发布满 24 小时才许装」投毒防线）
+和 `trust-lockfile`。关掉这两个能快得多，但那是拿安全换速度，应该由你自己决定，
+不该由一个升级插件替你决定。
+
+### 按钮的两个状态
+
+- **已缩短**（默认）：下次批量升级前会检查那四个键，缺哪个补哪个。
+- **默认**：以后不再写。**已经写进去的那几行不会被删**——它们本来就是你的文件里的普通设置，
+  插件不会偷偷清理；想恢复原状就手工删掉那四行，或者用改之前留下的
+  `pnpm-workspace.yaml.upgrader-bak` 覆盖回去。
+
+两种状态都只影响**以后**的批次。选择存在 profile 里，点完立刻生效，不用重启。
+
+### 它动手有多小心
+
+这个文件 pnpm 自己也会往里追加东西（`allowBuilds`、`minimumReleaseAgeExclude`），
+所以插件用的是最小改法：
+
+- 只**追加缺失的顶层键**，已有的行一个字节都不动，也不重排、不重新序列化整个文件
+- 你手写过 `fetch-retries: 5`（破折号写法）也认，不会再追加一个 `fetchRetries: 4` 覆盖你的选择
+- **整批升级只写一次**，不是每个插件写一次
+- 拿不到 profile 的写入锁就**一个字节都不写**，那批升级照常跑，只是慢一点
+- 第一次改动前把原文备份成 `pnpm-workspace.yaml.upgrader-bak`，备份失败就放弃写入
+- 任何失败都只在任务日志里记一行，**不会**中断升级：这是提速，不是前置条件
+
+任务日志里会写清楚这次到底做了什么，三种都有一句：
+`pnpm retry settings: added fetchRetries, … to pnpm-workspace.yaml`、
+`already set`（本来就都齐了）、`left alone — lock-busy`（没写成，以及为什么）。
+
+顺带一提：这四行进了 profile 之后，这个 profile 里**所有** pnpm 都会读到它们，
+包括你自己在终端敲的 `dsh plugin add`——所以终端安装也一起变快了。
 
 ## 安装
 
@@ -208,6 +266,8 @@ manifest 里确实缺这条就补回去，已经装上就只清掉记录，记�
 
 ### 那一分多钟的去处：pnpm 的重试阶梯
 
+（给用户的通俗版在前面：[重试等待是什么](#重试等待是什么)；这一节记录取舍与实测数字。）
+
 慢的大头不是下载，是 pnpm 的**重试退避**。校验每一条锁文件条目时，国内镜像会稳定地
 `ETIMEDOUT`；pnpm 的默认退避是 10 秒起步、翻倍到 60 秒封顶，每次超时都要**真等**那么久。
 90 多条要校验，几条撞上就吃掉两分钟——实测一个包含 91 条条目的锁文件冷校验
@@ -280,8 +340,11 @@ atomic-write: timed out waiting for the writer lock at …/package.json.lock
 | 命令 | **无** | 不调用 `child_process`，不 spawn 任何进程；安装动作交给宿主的 `pluginManager` |
 | 凭据 | **无** | 不读 token，不读 `.npmrc`，不做任何认证。私有源依赖 pnpm 自己的配置 |
 
-安装源的选择（`registry` / `customRegistries`）由**宿主的设置服务**写进 profile 的
+安装源的选择（`registry` / `customRegistries`）以及重试调参开关（`pnpmTuning`）都由
+**宿主的设置服务**写进 profile 的
 `cordis.patch.yml`，不是插件自己改文件——插件只调 `configForms` 的 `set()`。
+（`pnpm-workspace.yaml` 里那四个 pnpm 键是另一回事：那是插件自己按最小改法追加的，
+见上文 [重试等待是什么](#重试等待是什么)。）
 
 宿主注入的 `profileContext.dir` 就是 profile 目录，插件直接取它，**一个环境变量都不读**。
 桌面壳（或任何没有这个服务的宿主）里退回「当前工作目录看起来像不像一个 profile」——
@@ -374,18 +437,19 @@ dsh-plugin-upgrader/
 ├── src/                  源码（TypeScript）
 │   ├── index.ts          宿主端入口：路由注册、job 调度、加载时恢复 manifest
 │   ├── host/             宿主端逻辑（Node，无 DOM）
-│   │   ├── config.ts     Config schema（volatile 的 registry / customRegistries）、读取用户选择
-│   │   ├── overview.ts   组装 overview 载荷（含并发上限）
-│   │   ├── registry.ts   registry packument 拉取 / 裁剪、GitHub tag 列表、镜像缺口
-│   │   ├── install.ts    单步安装：in-place 替换、remove 回退、enabled 状态恢复
-│   │   ├── manifest.ts   profile package.json 读写、journal、加载时恢复
-│   │   ├── lock.ts       读 profile 写入锁、在锁内改 manifest、把锁超时翻成人话
-│   │   ├── progress.ts   从 pnpm 原始输出推断 job 阶段
-│   │   ├── bundle.ts     插件元数据（来源分类、多语言字段、图标）
-│   │   ├── repo.ts       仓库 URL 归一化
-│   │   ├── version.ts    semver 比较、发布页链接
-│   │   ├── http.ts       回环校验、JSON 读写
-│   │   └── manager.ts    宿主 pluginManager 服务的最小类型契约
+│   │   ├── config.ts      Config schema（volatile 的 registry / customRegistries / pnpmTuning）、读取用户选择
+│   │   ├── overview.ts    组装 overview 载荷（含并发上限）
+│   │   ├── registry.ts    registry packument 拉取 / 裁剪、GitHub tag 列表、镜像缺口
+│   │   ├── pnpm-tuning.ts 往 pnpm-workspace.yaml 补 pnpm 的超时 / 重试设置（只追加缺失顶层键）
+│   │   ├── install.ts     单步安装：in-place 替换、remove 回退、enabled 状态恢复
+│   │   ├── manifest.ts    profile package.json 读写、journal、加载时恢复
+│   │   ├── lock.ts        读 profile 写入锁、在锁内改 manifest、把锁超时翻成人话
+│   │   ├── progress.ts    从 pnpm 原始输出推断 job 阶段
+│   │   ├── bundle.ts      插件元数据（来源分类、多语言字段、图标）
+│   │   ├── repo.ts        仓库 URL 归一化
+│   │   ├── version.ts     semver 比较、发布页链接
+│   │   ├── http.ts        回环校验、JSON 读写
+│   │   └── manager.ts     宿主 pluginManager 服务的最小类型契约
 │   └── client/           浏览器端（拆成模块，由 esbuild 打成一个文件）
 │       ├── index.ts      createPlugin(require)：槽位注册入口
 │       ├── components/   Tab / PluginRow / VersionLine / JobPanel / SourceDialog
@@ -447,8 +511,9 @@ pnpm run check     # 以上全部（typecheck + build + test + pack 检查 + 产
 宿主端在 `src/index.ts`（`webServer` 前缀路由 `/api/plugin-upgrader`），
 浏览器端在 `src/client/index.ts`（注册 `plugins.tab` 槽位）。
 
-用户设置有两个：`registry`（当前在用的源，空 = 跟随 pnpm）和 `customRegistries`
-（用户自己加的源），都在 `src/host/config.ts` 里声明成 `.volatile()`——这是宿主
+用户设置有三个：`registry`（当前在用的源，空 = 跟随 pnpm）、`customRegistries`
+（用户自己加的源）和 `pnpmTuning`（升级前要不要收紧 pnpm 的重试设置，默认开），
+都在 `src/host/config.ts` 里声明成 `.volatile()`——这是宿主
 设置服务愿意为它生成表单、并且写入能进到正在运行的插件里而不重启的唯一形状。
 浏览器端通过 `configForms` 服务读写（`src/client/registry.ts`）；没有那个服务的
 宿主照样能渲染这一页，只是源只能看不能改。两个自带源是常量，永远不写进
