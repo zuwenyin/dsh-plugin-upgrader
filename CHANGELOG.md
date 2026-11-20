@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.9.2 — 2026-11-20
+
+- **Docs: both READMEs now say what the "needs attention" count counts.** The header stat was
+  described in one bullet ("installed version incompatible, mirror behind, version unreadable, a
+  build waiting for approval") and repeated in one line under *Where it shows up* — enough to
+  recognise the number, not enough to answer "which of these is on my screen, and what do I press".
+  The new section is a four-row table with the condition, what the row actually renders, and the
+  way out for each; it also names the two states that are **deliberately excluded** (`blocked` and
+  `upgradable`) and why counting them would keep the number above zero forever.
+  It also documents the one honest exception rather than leaving it to be discovered: a `link:` /
+  `file:` package gets a `local path install: …` `versionError`, `needsAttention()` counts any
+  non-empty `versionError`, so a package installed from a directory (this plugin itself, in a
+  development profile) is counted with no action available on its row. That is the current
+  behaviour, not a fixed one — the section says so instead of implying the row can be cleared.
+  No code, no tests, no behaviour change: `pnpm run check` green, 381 tests.
+
 ## 1.9.1 — 2026-11-17
 
 - **The 换源 and 重启 dialogs keep a readable surface under a wallpaper skin.** Reported as
