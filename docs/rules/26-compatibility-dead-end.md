@@ -166,17 +166,43 @@ export function needsAttention(row: OverviewRow): boolean {
   return (
     row.installedIncompatible !== undefined ||
     (Array.isArray(row.mirrorMissing) && row.mirrorMissing.length > 0) ||
-    (row.versionError !== undefined && row.versionError !== '') ||
+    (versionIsLookedUp(row) && row.versionError !== undefined && row.versionError !== '') ||
     (Array.isArray(row.pendingBuilds) && row.pendingBuilds.length > 0)
   )
 }
 ```
 
 空数组不算（`mirrorMissing: []` 与 `undefined` 同义），空字符串不算（`versionError: ''`
-在 host 侧就是「没有错误」的意思）。`test/diagnostics.test.ts` 里 6 条用例逐项钉这四件事，
-外加一条 `blocked` **不**计数。
+在 host 侧就是「没有错误」的意思）。`test/diagnostics.test.ts` 逐项钉这四件事，外加一条
+`blocked` **不**计数。
 
 「可升级」同理不计入——那是好事，不是需要处理的事。
+
+### `versionError` 是两种东西，只能数其中一种
+
+这是 1.9.3 修的误报。同一个字段里既装着**查了但失败**（registry 超时、限流、包没发布过），
+也装着**一句说明版本从哪来**——本地路径安装没有可比对的注册表副本、Git / tarball 安装没有
+发布历史、安装目录里自带的 bundle 不归 profile 管。后三种根本轮不到「查」，页面也给不出任何
+按钮，可只要 `versionError` 非空就被数进去：开发时那个 `link:` 装的插件自己就永远挂在徽标上，
+点进去只有一个包名，永远清不到 0。
+
+判据是**这一行本来会不会去查版本**：
+
+```ts
+function versionIsLookedUp(row: OverviewRow): boolean {
+  return row.managed === true && (row.kind === 'registry' || row.kind === 'unknown')
+}
+```
+
+- `kind === 'unknown'` 必须算进去。真实 profile 里绝大多数正常依赖的 `source` 都解析成
+  `unknown`（`sourceKind()` 认不出来），把 `unknown` 排除等于把整页插件一起排除。
+- `managed === false` 的行是安装目录自带的 bundle，不归 profile 管，它的
+  `'not a profile-managed package'` 同样是说明。
+- 不能改用「`host` 不再给 path 行设 `versionError`」这个改法：`test/self-row.test.ts` 直接
+  断言那两句原文，而且 `PluginRow` 拿 `versionNoteOf(failure)` 当**描述行**
+  （`row.description ?? versionNote ?? row.name`），删掉之后这类行就只剩一个包名。
+- 真正失败的句子照旧计数，`retriable` 的正则也照旧给「重试」——收窄的是**哪些行会被问**，
+  不是**失败长什么样**。
 
 ## 七之二、待批准构建：manager 不给的，只能自己读
 

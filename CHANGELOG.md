@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.9.3 — 2026-11-20
+
+- **A package installed from a directory no longer sits in "needs attention" forever.** The badge
+  counts a row when `versionError` is non-empty, and that field carries two unrelated things: a
+  lookup that **failed** (registry timeout, rate limit, a package that was never published) and a
+  sentence explaining **where the version came from**. A `link:` / `file:` dependency has no
+  registry copy to compare against, a `git:` or tarball install has no published history, and a
+  bundle that ships inside the installation is not profile-managed — the host describes each of
+  those in the same field. All three were counted, so a development profile (where this plugin
+  itself is `link:`ed) could never bring the number back to zero, and the counted row offered no
+  button at all: "there is something to handle" with nothing to handle.
+  The rule is now "would this row's version be looked up at all": `managed === true` **and**
+  `kind === 'registry' || kind === 'unknown'` (`versionIsLookedUp()` in
+  `src/client/diagnostics.ts`). `unknown` must stay in: most ordinary profile dependencies resolve
+  to it, since `sourceKind()` cannot classify a bare `name@range` source. Real failures are counted
+  exactly as before, and the row's **Retry** button is untouched — what narrowed is *which rows are
+  asked*, not *what a failure looks like*.
+  Host data is unchanged on purpose: `test/self-row.test.ts` asserts those sentences verbatim, and
+  `PluginRow` uses the same string as the row's description (`row.description ?? versionNote ??
+  row.name`), so suppressing it would leave such rows showing nothing but a package name.
+  `test/diagnostics.test.ts` gains three cases: the source-explaining sentences (path, path with no
+  published copy, git, tarball, unmanaged) are not counted, a managed registry row with a real
+  failure still is, and `versionError: ''` still is not. Verified to fail against the old predicate.
+  Both READMEs updated: the four-row table's third row is now "version unreadable" (the source
+  sentences moved into the *deliberately not counted* list, where they belong). 383 tests.
+
 ## 1.9.2 — 2026-11-20
 
 - **Docs: both READMEs now say what the "needs attention" count counts.** The header stat was

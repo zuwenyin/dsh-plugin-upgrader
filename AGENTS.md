@@ -104,13 +104,11 @@ HMR 会重建本插件，新实例必须还认得旧实例的批次。状态挂 
 两种失败**两种说法**：能去「已安装」重新启用的和真丢了要重装的，不能共用一句（`inactiveAfterRollback` 优先）。**重试激活不走 `installBundle`**（会被 `already-installed` 拒），走 `setBundleEnabled(false)` → `setBundleEnabled(true)`。**`listBundles().enabled` 是「用户选择」不是「跑起来了」**。 [详证](docs/rules/24-rollback-inactive.md)
 
 ## 25. 「下载总数」不是「使用量」
-判断有没有人真的在用，只能看**没发版那天的日下载量**。`last-month` 会随滚动 30 天窗口自己往下掉，看到平稳下坡**不是**回归；最近一两天报 0 是**上报滞后**，不是没人用（拿
-`react` 对照过：四千万下载的日子也报 0）。**发版会把曲线搅乱**：发版日是固定开销，本包实测是安静日的 8.3 倍——功能没变不必发版。**基线用中位数不用平均数**。**不要**把
-`--fail-below` 写进 CI：会随口径波动变红的检查，只会训练所有人忽略红色。 [详证](RELEASING.md)
+判断有没有人在用，只看**没发版那天的日下载量**：`last-month` 随 30 天窗口自己下掉，最近一两天报 0 是**上报滞后**。**基线用安静日中位数**，**发版日约 8.3 倍**——功能没变不必发版。**不要**把 `--fail-below` 写进 CI：口径波动变红的检查只会训练人忽略红色。 [详证](RELEASING.md)
 
 ## 26. 不兼容不能是一条死路
-「装不了」要当场说清**并给出能装的版本**（宿主闸门在卸下之后才拒绝，§20）。「新的会被拒」是 `blocked`；「在跑的不被允许」是 `installedIncompatible`，单独说。**`latest` 装不了 ≠ 没得装**：有兼容的新版就给 `recommended` 并**重开 `upgradable`**；按钮与批量只认 `recommended ?? latest`（`targetOf(row)`），`recommended` **永不高于** `latest`，再拿 `row.latest` 就退回死行。
-**读不到 DSH 版本就不判**：`runtimeVersion` 为 null 时既不设 `installedIncompatible` 也不标兼容。**`versionError` 是宿主数据不是文案**：本地化只在客户端（`versionNoteOf`），未识别原文**逐字透传**。**「需处理」只算四件事**：`installedIncompatible`、镜像落后、读不到版本、待批准构建——不算 `blocked` 与可升级。
+「装不了」要当场说清**并给出能装的版本**（闸门在卸下后才说话，§20）。「新的会被拒」是 `blocked`；「在跑的不被允许」是 `installedIncompatible`，单独说。**`latest` 装不了 ≠ 没得装**：有兼容的新版就给 `recommended` 并**重开 `upgradable`**；按钮与批量只认 `recommended ?? latest`（`targetOf(row)`），`recommended` **永不高于** `latest`，否则退回死行。
+**读不到 DSH 版本就不判**：`runtimeVersion` 为 null 时既不设 `installedIncompatible` 也不标兼容。**`versionError` 是宿主数据不是文案**：只在客户端本地化（`versionNoteOf`），未识别原文**逐字透传**。**「需处理」只算四件事**：`installedIncompatible`、镜像落后、查不到版本、待批准构建——不算 `blocked` 与可升级；**路径/Git/未托管行**的 `versionError` 只在说来源，**不算**。
 **待批准构建**：宿主自读 `allowBuilds`，行给 `pendingBuilds`+批准按钮；**批量跳过并说明**，仍算 `upgradable`。**诊断走纯客户端**，不加路由与 §15 信号。 [详证](docs/rules/26-compatibility-dead-end.md)
 
 ## 27. pnpm 的重试退避由插件代管，不许拿供应链策略换速度

@@ -72,6 +72,37 @@ test('a version lookup that failed needs a decision', () => {
   assert.equal(needsAttention(row({ versionError: '' })), false)
 })
 
+test('a sentence about where the version came from is not a failure', () => {
+  /*
+   * `versionError` carries prose as well as failures. A `link:`/`file:`
+   * dependency has no registry copy to compare against, so the host explains
+   * that in the same field — and counting it pinned the badge above zero
+   * forever, with nothing on the row to press. This is the developer's own copy
+   * of this plugin, which is exactly how the count became un-clearable.
+   */
+  assert.equal(
+    needsAttention(row({ kind: 'path', upgradable: false, versionError: 'local path install: the version comes from the directory, not the registry' })),
+    false,
+  )
+  assert.equal(
+    needsAttention(row({ kind: 'path', upgradable: false, versionError: 'local path install: the registry has no published copy' })),
+    false,
+  )
+  // A Git or tarball install has no published history either, for the same
+  // reason: there is nothing to look up, not a lookup that broke.
+  assert.equal(needsAttention(row({ kind: 'git', upgradable: false, versionError: 'git source: no registry history' })), false)
+  assert.equal(needsAttention(row({ kind: 'tarball', upgradable: false, versionError: 'tarball source: no registry history' })), false)
+  // A bundle living inside the installation is not the profile's to upgrade.
+  assert.equal(needsAttention(row({ managed: false, versionError: 'not a profile-managed package' })), false)
+})
+
+test('the count still names a real registry failure on a managed dependency', () => {
+  // The narrowing must not swallow the case the count exists for: the same
+  // sentence shape becomes a genuine problem as soon as a lookup was expected.
+  assert.equal(needsAttention(row({ kind: 'registry', versionError: 'registry unreachable: fetch failed' })), true)
+  assert.equal(needsAttention(row({ kind: 'unknown', versionError: 'registry 500 while fetching packument' })), true)
+})
+
 test('a build waiting for approval needs a decision', () => {
   assert.equal(needsAttention(row({ pendingBuilds: ['esbuild'] })), true)
   assert.equal(needsAttention(row({ pendingBuilds: [] })), false)

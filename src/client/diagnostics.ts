@@ -10,6 +10,26 @@
 import type { OverviewRow, T } from './types.ts'
 
 /**
+ * Whether the host was ever going to look this row's versions up at all.
+ *
+ * `versionError` carries two different things: a lookup that failed, and a
+ * sentence explaining where the version came from. The second is prose, not a
+ * fault — a `link:` / `file:` dependency takes its version from the directory,
+ * a bundle inside the installation is not profile-managed, and a `git:` /
+ * tarball install has no published history to compare against. None of them can
+ * be upgraded from this page at all, so "counting them" was a number nobody
+ * could ever bring back to zero: the developer's own `link:`ed copy of this
+ * plugin sat in the badge forever, with no button to press on its row.
+ *
+ * Only a profile-managed dependency on a registry range has a lookup that can
+ * genuinely fail — a timeout, a rate limit, a package that is not published —
+ * and only that failure is something a Retry or a source switch can fix.
+ */
+function versionIsLookedUp(row: OverviewRow): boolean {
+  return row.managed === true && (row.kind === 'registry' || row.kind === 'unknown')
+}
+
+/**
  * Whether this row has something a person has to act on.
  *
  * Deliberately not "is it broken": a mirror that is behind and a build waiting
@@ -26,7 +46,7 @@ export function needsAttention(row: OverviewRow): boolean {
   return (
     row.installedIncompatible !== undefined ||
     (Array.isArray(row.mirrorMissing) && row.mirrorMissing.length > 0) ||
-    (row.versionError !== undefined && row.versionError !== '') ||
+    (versionIsLookedUp(row) && row.versionError !== undefined && row.versionError !== '') ||
     (Array.isArray(row.pendingBuilds) && row.pendingBuilds.length > 0)
   )
 }
