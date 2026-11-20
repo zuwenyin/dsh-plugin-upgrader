@@ -130,6 +130,35 @@ own market page):
 
 ![Expanded history](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
 
+## What "needs attention" means
+
+The header number counts only the plugins that are **actually broken in this profile and
+that you can do something about**. Four conditions, and any one of them counts
+(`needsAttention()`, see [src/client/diagnostics.ts](./src/client/diagnostics.ts)):
+
+| Problem | When it appears | What the row shows | What you can do |
+| --- | --- | --- | --- |
+| Installed version is incompatible | the DSH range declared by the *installed* version is not satisfied by the current host — the plugin is most likely not loaded at all | red line: "the installed 1.0.0 requires DSH ≥…, this host does not satisfy it" | expand **history (n)** and pick a compatible version, or move DSH into that range |
+| Mirror behind | the official registry has a publish your mirror has not synced yet; selecting it fails inside pnpm with `ERR_PNPM_NO_MATCHING_VERSION` | red line: "the mirror has not synced these published versions, they cannot be installed" plus the version numbers | switch source (header **Registry**), or wait for the mirror |
+| Version unreadable | registry timeout / rate limit, a Git or local-path install, a package that was never published | red line with the reason; network-shaped failures also get a **Retry** button | press **Retry** for network problems; path installs are normal, see below |
+| Build waiting for approval | `allowBuilds` still holds a placeholder, so the install fails halfway through | yellow banner: the package (`dsh-xdpool@2.6.4`) and **Approve and restart** | press it. **One at a time** — approving means agreeing to run code that package ships and runs at install time |
+
+**Deliberately not counted** (counting either would keep the number above zero forever):
+
+- **latest cannot be installed** (`blocked`): there is a newer version you do not need right
+  now, and the row already says so
+- **an upgrade is available** (`upgradable`): that is good news, not a problem
+
+**One honest exception:** a package installed with `link:` / `file:` (this plugin itself,
+when you are developing it) receives a `local path install: …` `versionError`, and
+`needsAttention` counts "`versionError` is non-empty" — so it shows up here. Opening that
+row offers no button and there is nothing to fix: the line explains where the version comes
+from, it is not a fault.
+
+Pressing **needs attention n** leaves only those rows, stacked with the search box. When
+there are none it says "nothing needs attention" rather than "no match" — you were not
+searching for anything at that moment, and that is good news.
+
 ## What the "Retry waits" button is
 
 In one sentence: **it stops pnpm from sitting idle, without changing what pnpm checks.**
