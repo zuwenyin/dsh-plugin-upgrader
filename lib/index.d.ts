@@ -38,6 +38,16 @@ interface JobRecord {
     /** What that step is doing right now. */
     phase?: Phase;
     /**
+     * Which verb that step runs.
+     *
+     * `phase` only says where pnpm is (`installing`, `verifying`, `applying`),
+     * and pnpm walks a removal through the same phases it walks an install
+     * through — it even re-checks the lockfile first. Reporting a removal from
+     * the phase alone therefore names the wrong action, so the panel is told the
+     * verb separately instead of guessing it from the progress.
+     */
+    action?: 'upgrade' | 'switch' | 'remove';
+    /**
      * The last thing pnpm printed, trimmed.
      *
      * A phase alone cannot distinguish "downloading" from "stuck on the eleventh

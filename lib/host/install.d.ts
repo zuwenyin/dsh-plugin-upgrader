@@ -46,7 +46,13 @@ export interface StepOutcome {
         tail?: string;
     };
 }
-/** Allowed per-step actions. */
+/**
+ * Allowed per-step actions.
+ *
+ * `remove` is dispatched to `removeStep` by the job runner rather than to
+ * `runStep`; it is in this set because the request validator is the only place
+ * that decides whether a step is worth starting at all.
+ */
 export declare const ACTIONS: Set<string>;
 /**
  * One version's DSH requirement, looked up only when a step is about to run.
@@ -111,7 +117,31 @@ export declare function restoreSelection(manager: PluginManager, name: string, l
  */
 export declare function runStep(manager: PluginManager, step: StepRecord, log: LogSink, announce?: RequestIdSink, registry?: string, guard?: InstallGuard): Promise<StepOutcome>;
 /**
+ * Remove one bundle, for good.
+ *
+ * Deliberately not `runStep`: that function's job is to end with a version
+ * installed, and every failure path in it (`recover`, `rollBack`,
+ * `restoreSelection`, `restoreEnabledState`) exists to put back what a failed
+ * replacement destroyed. Running a removal through it would mean a refused
+ * removal quietly reinstalls the package the user just asked to be gone, and a
+ * successful one is reported through a code path that then tries to set the
+ * enabled flag of a package that no longer exists.
+ *
+ * So this is a second, smaller entry point with one rule: it either removes the
+ * bundle or it says why not. Nothing here ever installs anything.
+ *
+ * @param manager - the plugin manager.
+ * @param step - the removal step.
+ * @param log - progress sink.
+ * @returns the outcome, in the same shape the panel already reads.
+ */
+export declare function removeStep(manager: PluginManager, step: Pick<StepRecord, 'name'>, log: LogSink): Promise<StepOutcome>;
+/**
  * Whether a step names something this plugin is willing to install.
+ *
+ * A `remove` step names a bundle and nothing else — there is no version to
+ * install, and demanding one would make the whole action unreachable through
+ * the request validator.
  *
  * @param step - one element of the request body.
  * @returns an error code, or undefined when valid.

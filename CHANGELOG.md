@@ -1,5 +1,60 @@
 # Changelog
 
+## 1.10.0 — 2026-11-26
+
+- **A selection can now be uninstalled as well as upgraded, and uninstalling asks first.** The
+  upgrade tab has had a multi-select bar since 1.4, and every row on it belonged to exactly one
+  action. Removal does not fit that shape: it is the first thing this plugin does that **cannot be
+  undone**. An upgrade can go back to a previous version; an uninstall can only be reinstalled, and
+  the configuration and data a plugin left on disk do not come back with it. So it is deliberately
+  not a second primary button — it is an outlined danger button, it opens a confirmation dialog,
+  and that dialog lists every name it is about to remove, says in as many words that there is no
+  rollback, and says what is *not* deleted (the plugin's own config and data stay on disk).
+  One checkbox still drives both actions, but each action counts the selection itself
+  (`pickedUpgrades` / `pickedRemovals`): a selection is usually half built from rows that can only
+  be upgraded, and a button that quietly ignores them is worse than one that is disabled.
+- **Uninstalling is its own host entry point, and it never installs anything.** The upgrade
+  pipeline promises that "the named version is on disk when this returns", which is why it is full
+  of put-it-back paths: an `error` in the result enters `recover`, a package still on disk gets
+  re-selected, a package already gone is reinstalled at the previous version. For an upgrade that
+  is correct; for a removal it is exactly backwards — a refused uninstall would quietly reinstall
+  what the user just asked to be rid of. `removeStep` replaces that with one rule: remove it, or
+  say why not. The only piece reused is the existing `bundle-in-use` self-heal
+  (`setBundleEnabled(true)` then `false` when the bundle reads as disabled, plain `false`
+  otherwise, one retry). Removal also leaves the profile `package.json` and its journal alone:
+  that patch mechanism belongs to in-place replacement, while removal calls the manager's own
+  `removeBundle`, the host's real uninstall entry point.
+- **Three refusals, three sentences.** `not-removable` is answered before pnpm is started at all —
+  the host's `removable` is the only opinion that counts, and it already covers shipped bundles and
+  rows another layer owns. `stop-profile` is its own case and its own text: this host has no HMR
+  and the profile starts that bundle, so **restarting does not help** — the pointer goes to DSH's
+  own Installed page instead. `bundle-in-use` keeps its existing meaning (the loader still holds a
+  fiber, try a restart) after the self-heal above. Folding those into one "failed" line is how a
+  user ends up retrying the one that can never succeed.
+- **This plugin never joins a batch uninstall**, for the same reason it never joins a batch
+  upgrade: unloading the code that is running the batch leaves nobody to finish it. Rows with
+  `removable === false` cannot be ticked either, so the checkbox can never promise something the
+  host will then refuse.
+- The dialog surface, the danger button and the frozen name list follow the existing modal and
+  button vocabulary (`dsh-pu-modal*`, `is-danger` added beside `is-primary`/`is-ghost`/`is-tiny`);
+  the names are frozen when the dialog opens so a refresh landing mid-confirmation cannot add a
+  package the user never saw.
+- **The progress panel no longer calls an uninstall an install.** pnpm walks a removal through the
+  same states as an install — it verifies the lockfile first, and that line is what moves a job to
+  `installing` — so the panel, which derived the wording from the phase alone, announced "正在下载并安装"
+  and then explained that "a first install … takes a while" while pnpm was deleting files. The host
+  now reports the step's verb separately (`JobRecord.action`, returned by `GET job` and on the
+  overview's `active`), and `phaseKeys()` in `JobPanel.ts` picks the copy from the verb and the phase
+  together: a removal says 正在卸载 with its own slow hint, and still shares the phases that really
+  are the same (`applying`, `cancelling`, `verifying`). A snapshot with no verb — an adopted job from
+  an older host — keeps the install wording on purpose, because guessing "removal" is the worse miss.
+  Four cases in `test/job-panel.test.ts` pin the mapping, and the removal branch was verified to fail
+  with the verb check disabled.
+- `test/remove-step.test.ts` adds 13 cases, one per branch above. The two that matter most are
+  "a removal takes the package away and installs nothing" and "a bundle the manager will not give
+  up is reported, not removed"; both were verified to fail against a `runStep`-based implementation
+  before the final code went in. 400 tests.
+
 ## 1.9.3 — 2026-11-20
 
 - **A package installed from a directory no longer sits in "needs attention" forever.** The badge

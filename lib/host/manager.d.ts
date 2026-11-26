@@ -94,7 +94,15 @@ export interface RegistriesReport {
     fallbackRegistries: readonly string[];
     resolved: string | null;
 }
-/** One step of a batch job, as the browser sends it. */
+/**
+ * One step of a batch job, as the browser sends it.
+ *
+ * Deliberately only the two install verbs: this is the shape `runStep` accepts,
+ * and `runStep`'s contract is that it ends with the named version on disk. A
+ * removal is a different promise and has its own entry point (`removeStep`),
+ * which takes the name and nothing else — so `'remove'` is not a member here
+ * even though the request body may carry it.
+ */
 export interface StepRecord {
     name: string;
     version: string;

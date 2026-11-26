@@ -41,7 +41,16 @@ export function PluginRow(props: PluginRowProps): unknown {
    * flow belongs to its manager, so the row offers that instead.
    */
   const selfUpdate = self === true && row.latest !== undefined && row.latest !== row.version
-  const selectable = row.upgradable === true && self !== true
+  /**
+   * Whether this row can be checked.
+   *
+   * Two different reasons now: it has a newer version, or it can be uninstalled.
+   * The checkbox itself stays one control — a row that is neither cannot be
+   * acted on at all — and the selection bar offers the two actions separately,
+   * each with its own count, so a pick that only one of them can use is visible
+   * as a smaller number instead of a silently ignored one.
+   */
+  const selectable = (row.upgradable === true || row.removable === true) && self !== true
   const status = row.error !== undefined && row.error !== null ? 'err' : row.upgradable ? 'new' : 'idle'
   /**
    * Why this row has no version list, when the host knows.

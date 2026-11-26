@@ -36,7 +36,7 @@ import { savedPnpmTuning, savedRegistry, type UpgraderConfig } from './host/conf
 import { writeJson, isLoopbackRequest, readJsonBody } from './host/http.ts'
 import { buildHostInfo } from './host/hostinfo.ts'
 import { buildOverview } from './host/overview.ts'
-import { runStep, validateStep, type InstallGuard, type StepOutcome } from './host/install.ts'
+import { removeStep, runStep, validateStep, type InstallGuard, type StepOutcome } from './host/install.ts'
 import { profileDirFrom, recoverPendingDrops, setProfileDir } from './host/manifest.ts'
 import { applyTuning, type TuningResult } from './host/pnpm-tuning.ts'
 import { nextPhase, type Phase } from './host/progress.ts'
@@ -159,6 +159,16 @@ interface JobRecord {
   /** What that step is doing right now. */
   phase?: Phase
   /**
+   * Which verb that step runs.
+   *
+   * `phase` only says where pnpm is (`installing`, `verifying`, `applying`),
+   * and pnpm walks a removal through the same phases it walks an install
+   * through — it even re-checks the lockfile first. Reporting a removal from
+   * the phase alone therefore names the wrong action, so the panel is told the
+   * verb separately instead of guessing it from the progress.
+   */
+  action?: 'upgrade' | 'switch' | 'remove'
+  /**
    * The last thing pnpm printed, trimmed.
    *
    * A phase alone cannot distinguish "downloading" from "stuck on the eleventh
@@ -219,8 +229,9 @@ export function sharedJobStore(): JobStore {
 /** One step as the request body carries it, before validation. */
 interface RawStep {
   name: string
-  version: string
-  action?: 'upgrade' | 'switch'
+  /** Absent on a `remove` step: there is no version to install. */
+  version?: string
+  action?: 'upgrade' | 'switch' | 'remove'
   enabled?: boolean
   approveBuilds?: string[]
 }
@@ -378,23 +389,44 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
       }
       for (const step of steps) {
         if (job.cancelled) break
-        job.current = `${step.name}@${step.version}`
+        const removal = step.action === 'remove'
+        job.current = removal ? step.name : `${step.name}@${step.version}`
+        job.action = removal ? 'remove' : step.action === 'switch' ? 'switch' : 'upgrade'
         job.stepStartedAt = Date.now()
         job.phase = 'waiting'
         job.activity = undefined
         job.attempt = undefined
         appendLog(job, `→ ${job.current}`)
-        const outcome = await runStep(
-          manager,
-          step,
-          (message) => appendLog(job, message),
-          (requestId) => {
-            job.requestIds.push(requestId)
-            store.inFlight = { requestId }
-          },
-          chosenRegistry(),
-          buildGuard(),
-        )
+        /*
+         * A removal is not an install with a different verb. `runStep` ends by
+         * making sure a version is on disk — that is what an upgrade wants and
+         * exactly what a removal does not: it would reinstall the package the
+         * user asked to be rid of. `removeStep` shares the log, the outcome
+         * shape and the job record, and nothing else.
+         *
+         * The install step is rebuilt rather than spread, so its action can only
+         * ever be one of the two install verbs; `runStep` has no branch for
+         * `remove` and must not be handed one.
+         */
+        const outcome = removal
+          ? await removeStep(manager, step, (message) => appendLog(job, message))
+          : await runStep(
+              manager,
+              {
+                name: step.name,
+                version: step.version ?? '',
+                ...(step.action === 'switch' ? { action: 'switch' as const } : {}),
+                ...(step.enabled === undefined ? {} : { enabled: step.enabled }),
+                ...(step.approveBuilds === undefined ? {} : { approveBuilds: step.approveBuilds }),
+              },
+              (message) => appendLog(job, message),
+              (requestId) => {
+                job.requestIds.push(requestId)
+                store.inFlight = { requestId }
+              },
+              chosenRegistry(),
+              buildGuard(),
+            )
         store.inFlight = null
         job.heartbeatAt = Date.now()
         job.results.push(outcome)
@@ -421,6 +453,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
     job.current = undefined
     job.stepStartedAt = undefined
     job.phase = undefined
+    job.action = undefined
     job.activity = undefined
     job.attempt = undefined
     job.finishedAt = Date.now()
@@ -494,6 +527,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
                   startedAt: live.startedAt,
                   stepStartedAt: live.stepStartedAt,
                   phase: live.phase,
+                  action: live.action,
                   activity: live.activity,
                   attempt: live.attempt,
                   /**
@@ -584,6 +618,7 @@ export function apply(ctx: HostContext, config?: UpgraderConfig): void {
           failed: job.failed,
           current: job.current,
           phase: job.phase,
+          action: job.action,
           activity: job.activity,
           attempt: job.attempt,
           startedAt: job.startedAt,

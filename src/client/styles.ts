@@ -53,6 +53,8 @@ export const CSS = `
 .dsh-pu-btn.is-ghost { background: transparent; border-color: transparent; color: var(--dsw-alias-label-secondary); padding: 0 8px; }
 .dsh-pu-btn.is-ghost:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .dsh-pu-btn.is-tiny { height: 24px; padding: 0 9px; font-size: 11px; border-radius: 6px; }
+.dsh-pu-btn.is-danger { border-color: var(--dsw-alias-state-error-primary); color: var(--dsw-alias-state-error-primary); }
+.dsh-pu-btn.is-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); border-color: var(--dsw-alias-state-error-primary); }
 .dsh-pu-search { display: flex; align-items: center; gap: 8px; }
 .dsh-pu-search input { height: 30px; width: 220px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsh-pu-surface-1); background: color-mix(in srgb, var(--dsh-pu-surface-1) var(--dsh-pu-surface-fill), transparent); color: var(--dsw-alias-label-primary); padding: 0 10px; font-size: 12px; font-family: inherit; outline: none; }
 .dsh-pu-search input:focus { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent); }
@@ -122,6 +124,9 @@ export const CSS = `
 .dsh-pu-src-add { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
 .dsh-pu-src-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 8px; border-top: 1px dashed var(--dsw-alias-border-l1); }
 .dsh-pu-src-foot .dsh-pu-hint { flex: 1; min-width: 160px; }
+.dsh-pu-rm-list { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 9px; border: 1px dashed var(--dsw-alias-border-l1); max-height: 220px; overflow: auto; }
+.dsh-pu-rm-head { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.dsh-pu-rm-name { font-size: 12px; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsh-pu-tag { font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); font-weight: 500; white-space: nowrap; }
 .dsh-pu-tag.is-new { border-color: var(--dsw-alias-brand-primary); color: var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent); }
 .dsh-pu-tag.is-err { border-color: var(--dsw-alias-state-error-primary); color: var(--dsw-alias-state-error-primary); }

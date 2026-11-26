@@ -36,6 +36,17 @@ English · [中文](./README.md)
   20 s; end to end 4m08s → 48.8 s. The "Retry waits" button on the Versions tab turns it
   off ([what that button is](#what-the-retry-waits-button-is)).
 - **Multi-select upgrade** — tick any subset of plugins and upgrade only those.
+- **Multi-select uninstall** — tick, press "Uninstall selected", see every name that is about to go
+  before anything happens, then confirm. It is the only action on this page with **no undo**:
+  an upgrade can go back to a previous version, an uninstall can only be reinstalled. That is why
+  it is an outlined danger button rather than a second primary one, and why the dialog says so.
+  Removal goes through the host's own `removeBundle` (the manager's real entry point, not a
+  manifest edit of ours). Two bounds still hold: this plugin never takes part in a batch uninstall
+  (it would delete the code running the batch), and rows with `removable === false` (shipped
+  bundles, rows owned by another layer) cannot be ticked or removed. Three distinct refusals:
+  `not-removable` (the host says this is not yours to delete), `stop-profile` (no HMR on this host
+  and the profile starts this bundle — a restart does not help, uninstall it from DSH's own
+  "Installed" page), `bundle-in-use` (restart DSH and try again).
 - **Version history / rollback** — expand any plugin to see every published version
   (with publish date and engine requirement) and switch to it in one click. Every
   version is first checked against the **DSH you are actually running**: releases
@@ -114,7 +125,9 @@ own market page):
   timeouts and retry spacing, and pressing it switches to *pnpm defaults* so it stops
   (see [What the "Retry waits" button is](#what-the-retry-waits-button-is))
 - **Upgrade all** handles every upgradable plugin; the selection bar below handles
-  **Upgrade selected**
+  **Upgrade selected** and **Uninstall selected** — the two buttons count separately,
+  because a row can be upgradable but not removable (shipped plugins, rows owned by
+  another layer) and a row can be removable without having a newer version
 - **Check for updates** bypasses the 5-minute registry cache
 - The search box filters by package name
 - The footer names the DSH version this page read, and which registry the list came from
@@ -128,7 +141,7 @@ own market page):
   - the version was not tagged, or the GitHub list is unreadable (rate limit,
     offline) → the repository's `releases` feed
 
-![Expanded history](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
+![The selection bar: upgrade selected, or uninstall selected](https://raw.githubusercontent.com/zuwenyin/dsh-plugin-upgrader/main/screenshots/selection.png)
 
 ## What "needs attention" means
 
@@ -258,7 +271,7 @@ host half:
 | Route | Purpose |
 | --- | --- |
 | `GET /api/plugin-upgrader/overview` | installed plugins plus their published versions (registry packument, 5-minute cache, 20-second timeout, at most 4 concurrent) |
-| `POST /api/plugin-upgrader/job` | queue a batch of upgrade / switch steps, return a job id immediately |
+| `POST /api/plugin-upgrader/job` | queue a batch of upgrade / switch / remove steps, return a job id immediately |
 | `GET /api/plugin-upgrader/job?id=…` | poll progress, current phase, elapsed time, per-plugin results and the live log |
 | `POST /api/plugin-upgrader/cancel` | abort the step in flight, whichever install is running |
 | `GET /api/plugin-upgrader/host` | this process's pid and how it was started, for the "restart DSH" dialog |
@@ -295,6 +308,21 @@ better than slipping an edit into somebody else's read-modify-write and losing t
 > entirely (see "Permissions, dependencies and external services" below).
 > See item 2 of [AGENTS.md](./AGENTS.md), "replacing a version does
 > **not** uninstall first".
+
+### Why an uninstall is a separate entry point
+
+The upgrade pipeline promises one thing: the named version ends up on disk. That is why it is
+full of "put back what broke" paths — an error in the result enters recovery, a package still on
+disk gets re-selected, a package already gone is reinstalled at the old version. For an upgrade
+that is right; for an uninstall it is exactly backwards: **a refused uninstall would quietly
+reinstall the package the user just asked to be rid of.**
+
+So removal does not go through that pipeline. It is a second, smaller entry point (`removeStep`)
+with one rule: delete it, or say why it was not deleted — never install anything. The one piece it
+reuses is the `bundle-in-use` self-heal that already existed (`setBundleEnabled(true)` then
+`false` when the bundle reads as disabled, plain `false` otherwise, then one retry). It also does
+not touch the profile `package.json` or the journal: removal calls the host's own `removeBundle`,
+the manager's real entry point, while the manifest patch above belongs to in-place replacement.
 
 ### An interrupted upgrade repairs itself
 
@@ -338,6 +366,12 @@ exactly like a hang, which is why it gets a phase name of its own.
 The phase is read from *pnpm's own words*. The host announces `installing` before pnpm
 even starts, so pnpm's later verification line still has to be able to name the phase
 as `verifying` — until it gives the verdict (`✓ Lockfile passes supply-chain policies`).
+
+The phase says where pnpm is, not *what* it is doing: `pnpm remove` verifies the lockfile too
+and reports `installing` just the same. So the host also reports the step's verb (upgrade /
+switch / remove) and the panel takes its wording from the verb and the phase together — a
+removal reads as uninstalling and gets its own slow hint, and only the phases that really
+mean the same thing (`applying`, `cancelling`, `verifying`) are shared.
 
 "Is it still working?" is asked of the *host*, not of pnpm. pnpm stays quiet for a
 minute during a registry retry, which is normal; judging a stall by "the log did not
@@ -497,6 +531,13 @@ are development-time only and are not part of the published tarball's runtime.
   removing it and restores it on failure; a killed process is repaired on the next
   load. A restore that cannot take the lock keeps the record instead of clearing it,
   so the next load repairs it. The plugin stays installed and keeps its enabled state.
+- **A failed uninstall** says which of three refusals it hit, and **never** reinstalls
+  the package to "recover" — that would quietly undo what the user was just told would
+  happen. `not-removable` refuses before pnpm starts at all; `stop-profile` says a
+  restart does not help and points at the entry point that does work; `bundle-in-use`
+  (the loader still holds a fiber) first clears its own jam — `true` then `false` when
+  the bundle reads as disabled, plain `false` otherwise — retries once, and only then
+  asks for a restart. On failure the package is still there and nothing was toggled.
 - **A rollback that lands but cannot activate** is reported as exactly that: the old
   version is back on disk, the host did not load it, and the panel tells you to
   re-enable it from the Installed tab instead of installing it again (which would

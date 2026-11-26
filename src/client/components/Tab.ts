@@ -28,6 +28,7 @@ import type {
 } from '../types.ts'
 import { JobPanel } from './JobPanel.ts'
 import { PluginRow } from './PluginRow.ts'
+import { RemoveDialog } from './RemoveDialog.ts'
 import { RestartDialog } from './RestartDialog.ts'
 import { RegistrySourceButton } from './SourceDialog.ts'
 import { TuningSwitch } from './TuningSwitch.ts'
@@ -87,6 +88,15 @@ export function Tab(props: TabProps): unknown {
   const [onlyNeedsAttention, setOnlyNeedsAttention] = React.useState(false)
   const [diagnosticsCopied, setDiagnosticsCopied] = React.useState(false)
   const [picked, setPicked] = React.useState<Set<string>>(() => new Set<string>())
+  /**
+   * Whether the uninstall confirmation is open.
+   *
+   * The names are captured when it opens rather than read live: the list behind
+   * it keeps refreshing, and a dialog that silently grew a package between being
+   * read and being confirmed would be asking about something nobody saw.
+   */
+  const [removeOpen, setRemoveOpen] = React.useState(false)
+  const [removeNames, setRemoveNames] = React.useState<string[]>([])
   const [job, setJob] = React.useState<JobSnapshot | undefined>(undefined)
   const [busyName, setBusyName] = React.useState<string | undefined>(undefined)
   const [cancelling, setCancelling] = React.useState(false)
@@ -359,9 +369,33 @@ export function Tab(props: TabProps): unknown {
     data?.registries?.resolved,
   ]
 
-  // Only upgradable rows can be picked, so a stale pick (a plugin that just got
-  // upgraded, or dropped out of the registry) never blocks the button.
-  const pickedCount = upgradable.reduce((count, row) => (picked.has(row.name) ? count + 1 : count), 0)
+  /**
+   * Rows this page can uninstall.
+   *
+   * `removable` is the manager's own answer, and it already excludes the plugins
+   * that ship inside the installation and the ones another layer owns. This
+   * plugin is excluded for a different reason and the same one as the upgrade
+   * batch: unloading the code that is running the batch leaves nobody to finish
+   * it. The row keeps the page's own uninstall entry instead.
+   */
+  const removable = rows.filter((row) => row.removable === true && row.name !== SELF_NAME)
+  /**
+   * Every row the checkbox may offer.
+   *
+   * The union of the two actions, not the upgradable set alone: before there was
+   * a second action, a checkbox on a row with no newer version would have been a
+   * control that did nothing.
+   */
+  const actionable = rows.filter((row) => row.name !== SELF_NAME && (row.upgradable === true || row.removable === true))
+
+  // A pick only counts where an action can actually use it, so a row that got
+  // upgraded or lost its newer version never leaves the button lit with nothing
+  // behind it. The two counts are reported separately: one checkbox, two
+  // actions, and a number beside each that says how much of the selection it
+  // covers.
+  const pickedCount = actionable.reduce((count, row) => (picked.has(row.name) ? count + 1 : count), 0)
+  const pickedUpgrades = upgradable.reduce((count, row) => (picked.has(row.name) ? count + 1 : count), 0)
+  const pickedRemovals = removable.reduce((count, row) => (picked.has(row.name) ? count + 1 : count), 0)
 
   const stepOf = (row: OverviewRow, version: string, action: 'upgrade' | 'switch', approveBuilds?: string[]): StepRecord => ({
     name: row.name,
@@ -435,8 +469,8 @@ export function Tab(props: TabProps): unknown {
     })
   }
 
-  /** Select every upgradable row. */
-  const pickAll = (): void => setPicked(new Set(upgradable.map((row) => row.name)))
+  /** Select every row either action can use. */
+  const pickAll = (): void => setPicked(new Set(actionable.map((row) => row.name)))
 
   /** Drop the whole selection. */
   const clearPicked = (): void => setPicked(new Set<string>())
@@ -449,6 +483,34 @@ export function Tab(props: TabProps): unknown {
         .map((row) => stepOf(row, targetOf(row), 'upgrade')),
       t('upgradeSelected'),
     )
+  }
+
+  /**
+   * Ask before removing the checked plugins.
+   *
+   * The names are frozen here, and the batch is built from that same list when
+   * the dialog is confirmed — not from `picked` read again. A background refresh
+   * between the two could otherwise change what is about to be deleted after the
+   * person had read the list.
+   */
+  const askRemovePicked = (): void => {
+    const names = removable.filter((row) => picked.has(row.name)).map((row) => row.name)
+    if (names.length === 0) return
+    setRemoveNames(names)
+    setRemoveOpen(true)
+  }
+
+  /**
+   * Remove the plugins the dialog named.
+   *
+   * A removal step carries no version: there is nothing to install. That is the
+   * whole difference from a batch upgrade, and it is why the host has a separate
+   * entry point for it — see `removeStep` in `host/install.ts`.
+   */
+  const removePicked = (): void => {
+    const steps: StepRecord[] = removeNames.map((name) => ({ name, version: '', action: 'remove' as const }))
+    setRemoveOpen(false)
+    void run(steps, t('removeSelected'))
   }
 
   /**
@@ -627,6 +689,16 @@ export function Tab(props: TabProps): unknown {
 
     restartOpen ? h(RestartDialog, { t, onClose: () => setRestartOpen(false) }) : null,
 
+    removeOpen
+      ? h(RemoveDialog, {
+          t,
+          names: removeNames,
+          busy,
+          onClose: () => setRemoveOpen(false),
+          onConfirm: removePicked,
+        })
+      : null,
+
     job === undefined ? null : h(JobPanel, { job, t, onCancel: cancel, cancelling }),
 
     rows.length === 0
@@ -640,7 +712,7 @@ export function Tab(props: TabProps): unknown {
             {
               type: 'button',
               className: 'dsh-pu-btn is-tiny',
-              disabled: busy || upgradable.length === 0,
+              disabled: busy || actionable.length === 0,
               onClick: pickAll,
             },
             t('selectAll'),
@@ -657,11 +729,29 @@ export function Tab(props: TabProps): unknown {
             {
               type: 'button',
               className: 'dsh-pu-btn is-tiny is-primary',
-              disabled: busy || pickedCount === 0,
+              disabled: busy || pickedUpgrades === 0,
               onClick: upgradePicked,
             },
             t('upgradeSelected'),
-            pickedCount > 0 ? ` (${pickedCount})` : '',
+            pickedUpgrades > 0 ? ` (${pickedUpgrades})` : '',
+          ),
+          /*
+           * The removal button is not a second primary: it is the one action on
+           * this page with no undo, so it reads as an outline with the danger
+           * colour and never becomes the obvious click in the bar. It shows its
+           * own count because much of a selection often cannot be removed —
+           * official plugins are upgradable and not removable.
+           */
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'dsh-pu-btn is-tiny is-danger',
+              disabled: busy || pickedRemovals === 0,
+              onClick: askRemovePicked,
+            },
+            t('removeSelected'),
+            pickedRemovals > 0 ? ` (${pickedRemovals})` : '',
           ),
         ),
 

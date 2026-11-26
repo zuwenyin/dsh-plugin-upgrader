@@ -143,6 +143,14 @@ export interface JobSnapshot {
   current?: string
   /** What the current step is doing, when the host knows. */
   phase?: 'installing' | 'cancelling' | 'applying' | 'waiting' | 'verifying'
+  /**
+   * Which verb the current step runs.
+   *
+   * The phase cannot answer this: pnpm walks a removal through the same phases
+   * as an install, so a panel that infers the verb from progress calls an
+   * uninstall "downloading and installing".
+   */
+  action?: 'upgrade' | 'switch' | 'remove'
   /** The newest line pnpm printed, so the panel can show actual work. */
   activity?: string
   /** Which registry is being tried, out of how many. */
@@ -167,8 +175,9 @@ export interface JobSnapshot {
 /** One step sent to the host. */
 export interface StepRecord {
   name: string
+  /** Empty on a `remove` step: there is no version to install. */
   version: string
-  action?: 'upgrade' | 'switch'
+  action?: 'upgrade' | 'switch' | 'remove'
   enabled?: boolean
   approveBuilds?: string[]
 }

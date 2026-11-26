@@ -28,6 +28,32 @@ export interface JobPanelProps {
 const CLOCK_MS = 1000
 
 /**
+ * The two copy keys that describe a step in flight.
+ *
+ * The phase alone is not enough to name the action: pnpm walks a removal
+ * through the same states as an install (it verifies the lockfile, it rewrites
+ * the profile), so the panel has to be told the verb. Splitting this out of the
+ * component keeps it a pure function and therefore testable — the mistake it
+ * exists to prevent is a removal reported as "downloading and installing".
+ *
+ * @param action - the verb of the current step, when the host reported one.
+ * @param phase - where pnpm is, when the host reported anything.
+ * @returns the phase copy key and the "why is this slow" hint key.
+ */
+export function phaseKeys(
+  action: JobSnapshot['action'],
+  phase: JobSnapshot['phase'],
+): { phase: string; hint: string } {
+  const removing = action === 'remove'
+  const hint = removing ? 'slowHintRemove' : 'slowHint'
+  if (phase === 'installing') return { phase: removing ? 'phaseRemoving' : 'phaseInstalling', hint }
+  if (phase === 'applying') return { phase: 'phaseApplying', hint }
+  if (phase === 'cancelling') return { phase: 'phaseCancelling', hint }
+  if (phase === 'verifying') return { phase: 'phaseVerifying', hint }
+  return { phase: 'phaseWaiting', hint }
+}
+
+/**
  * How long the panel trusts a snapshot it has not seen change.
  *
  * Polling delivers a fresh object every round, so a snapshot that stops
@@ -136,16 +162,7 @@ export function JobPanel(props: JobPanelProps): unknown {
   const stale = inStep && unchanged
   const stepMs =
     job.stepStartedAt === undefined ? 0 : Math.max(0, now - job.stepStartedAt)
-  const phaseKey =
-    job.phase === 'installing'
-      ? 'phaseInstalling'
-      : job.phase === 'applying'
-        ? 'phaseApplying'
-        : job.phase === 'cancelling'
-          ? 'phaseCancelling'
-          : job.phase === 'verifying'
-            ? 'phaseVerifying'
-            : 'phaseWaiting'
+  const { phase: phaseKey, hint: hintKey } = phaseKeys(job.action, job.phase)
   const phaseText =
     job.attempt !== undefined && job.attempt.total > 1
       ? t('registryAttempt', job.attempt.index, job.attempt.total)
@@ -208,7 +225,7 @@ export function JobPanel(props: JobPanelProps): unknown {
     inStep && job.activity !== undefined
       ? h('div', { className: 'dsh-pu-activity', title: job.activity }, job.activity)
       : null,
-    inStep ? h('div', { className: 'dsh-pu-hint' }, t('slowHint')) : null,
+    inStep ? h('div', { className: 'dsh-pu-hint' }, t(hintKey)) : null,
     showLog && Array.isArray(job.log) ? h('pre', { className: 'dsh-pu-log' }, job.log.join('\n')) : null,
   )
 }

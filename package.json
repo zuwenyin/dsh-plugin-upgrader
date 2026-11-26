@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-upgrader",
-  "version": "1.9.3",
-  "description": "DSH plugin for DeepSeek Harness: upgrade plugins from the Plugins page, version history, rollback, live pnpm progress. The dsh-plugin upgrader replaces a plugin in place, no uninstall, enabled state preserved.",
+  "version": "1.10.0",
+  "description": "DSH plugin for DeepSeek Harness: upgrade plugins from the Plugins page, version history, rollback, live pnpm progress, and a confirmed multi-select uninstall. The dsh-plugin upgrader replaces a version in place; uninstalls ask first and list every name.",
   "keywords": [
     "dsh",
     "dsh-plugin",

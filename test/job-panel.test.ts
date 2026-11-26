@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { fingerprint, staleness, type Liveness } from '../src/client/components/JobPanel.ts'
+import { fingerprint, phaseKeys, staleness, type Liveness } from '../src/client/components/JobPanel.ts'
 import type { JobSnapshot } from '../src/client/types.ts'
 
 /**
@@ -79,4 +79,40 @@ test('a snapshot without a heartbeat still counts as unchanged', () => {
   const liveness: Liveness = { stamp: fingerprint(noHeartbeat), at: 0 }
   const later = staleness(liveness, noHeartbeat, 60_000, THRESHOLD)
   assert.equal(later.stale, true)
+})
+
+/*
+ * The regression these pin.
+ *
+ * pnpm walks a removal through the phases of an install: it verifies the
+ * lockfile first, and that line is what moves the job to `installing`. The panel
+ * used to read the verb off the phase, so an uninstall was announced as
+ * "downloading and installing" and went on to explain that "a first install …
+ * takes a while". The host now reports the verb separately; these pin the
+ * mapping, because the phases alone cannot distinguish the two.
+ */
+
+test('an install still reads as an install', () => {
+  assert.deepEqual(phaseKeys('upgrade', 'installing'), { phase: 'phaseInstalling', hint: 'slowHint' })
+  assert.deepEqual(phaseKeys('switch', 'verifying'), { phase: 'phaseVerifying', hint: 'slowHint' })
+})
+
+test('a removal is never named with install words', () => {
+  const installing = phaseKeys('remove', 'installing')
+  assert.equal(installing.phase, 'phaseRemoving', 'the installing phase of a removal is not an install')
+  assert.equal(installing.hint, 'slowHintRemove', 'the hint must not talk about a first install')
+  const waiting = phaseKeys('remove', 'waiting')
+  assert.equal(waiting.hint, 'slowHintRemove', 'the hint follows the verb, not the phase')
+})
+
+test('a removal still shares the phases that mean the same thing', () => {
+  assert.equal(phaseKeys('remove', 'applying').phase, 'phaseApplying')
+  assert.equal(phaseKeys('remove', 'cancelling').phase, 'phaseCancelling')
+  assert.equal(phaseKeys('remove', 'verifying').phase, 'phaseVerifying')
+})
+
+test('a snapshot with no verb keeps the install wording', () => {
+  // Adopted jobs from an older host have no `action`; guessing "removal" would
+  // be worse than the generic wording, which is what an upgrade shows.
+  assert.deepEqual(phaseKeys(undefined, 'installing'), { phase: 'phaseInstalling', hint: 'slowHint' })
 })
